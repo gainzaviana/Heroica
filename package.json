@@ -1,0 +1,24 @@
+{
+  "name": "heroica",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Heroica: un juego de cartas cooperativo de superhéroes en un mundo de fantasía, para jugar en solitario o a dos manos.",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "preact": "^10.29.8"
+  },
+  "devDependencies": {
+    "@preact/preset-vite": "^2.10.6",
+    "@types/node": "^22.20.5",
+    "typescript": "^5.9.3",
+    "vite": "^6.4.6",
+    "vitest": "^5.1.0"
+  }
+}
