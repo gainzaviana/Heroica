@@ -273,7 +273,13 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
   switch (e.do) {
     case "damage": {
       const upgraded = p.play.some((c) => pcard(s, c.uid).type === "mejora");
-      damageEnemy(s, target!, upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount);
+      const amount = upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount;
+      if (e.target === "allMinions") {
+        for (const q of s.players) for (const m of [...q.engaged]) damageEnemy(s, m.uid, amount);
+        break;
+      }
+      if (e.stun && target) applyEffect(s, i, { do: "stun", target: e.target }, target, ctx);
+      damageEnemy(s, target!, amount);
       break;
     }
     case "thwart": thwartPlan(s, target!, e.amount); break;
@@ -679,17 +685,32 @@ function resolveDefense(s: GameState, r: Extract<Resume, { r: "defense" }>, opti
 }
 
 function askInterrupts(s: GameState, r: Extract<Resume, { r: "interrupts" }>) {
+  const p = s.players[r.player];
   const opts = responsesFor(s, r.player, "defend");
-  if (!opts.length) return applyAttackDamage(s, r);
+  const ab = heroOf(p).ability;
+  const canAbility = ab.timing === "defend" && !p.heroAbilityUsed && p.form === "heroe";
+  if (!opts.length && !canAbility) return applyAttackDamage(s, r);
   setPrompt(s, {
-    player: r.player, kind: "optional", text: "¿Juegas una carta antes de recibir el golpe? (se paga sola con tus cartas menos valiosas)",
-    options: [...opts.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text })), { id: "no", label: "No" }],
+    player: r.player, kind: "optional", text: "¿Juegas algo antes de recibir el golpe? (las cartas se pagan solas con tus cartas menos valiosas)",
+    options: [
+      ...(canAbility ? [{ id: "ability", label: ab.text, detail: "Habilidad de tu héroe (una vez por ronda)" }] : []),
+      ...opts.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text })),
+      { id: "no", label: "No" },
+    ],
     resume: r,
   });
 }
 
 function resolveInterrupt(s: GameState, r: Extract<Resume, { r: "interrupts" }>, option: string) {
-  if (option !== "no") {
+  if (option === "ability") {
+    const p = s.players[r.player];
+    const ab = heroOf(p).ability;
+    p.heroAbilityUsed = true;
+    log(s, `${heroName(s, r.player)}: ${ab.text}.`);
+    const pool = { amount: 0 };
+    runEffects(s, r.player, ab.effects, 0, { attacker: r.attacker, preventPool: pool });
+    r = { ...r, prevented: r.prevented + pool.amount };
+  } else if (option !== "no") {
     const p = s.players[r.player];
     const c = pcard(s, option);
     const pay = autoPay(s, r.player, c.cost, option) ?? [];

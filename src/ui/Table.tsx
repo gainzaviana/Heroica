@@ -6,6 +6,13 @@ import type { GameState } from "../engine/types";
 import { ENCOUNTER_CARDS, PLAYER_CARDS } from "../data/content";
 import { store, useStore } from "./store";
 import { EncounterCard, PlayerCard } from "./Card";
+import { artUrl } from "./art";
+
+/** A hero or villain portrait (its art, or its symbol while there is none). */
+export function Portrait({ artKey, glyph }: { artKey: string; glyph: string }) {
+  const url = artUrl(artKey);
+  return <div class="art-box" aria-hidden="true">{url ? <img src={url} alt="" /> : glyph}</div>;
+}
 
 type Sheet =
   | { k: "card"; uid: string }
@@ -77,7 +84,7 @@ function VillainPanel({ s, viewing, canAct, onEncounter }: { s: GameState; viewi
   return (
     <section class="villain-side">
       <div class="villain panel">
-        <div class="villain-art" aria-hidden="true">{sc.villain.glyph}</div>
+        <Portrait artKey={`villain-${sc.id}`} glyph={sc.villain.glyph} />
         <div class="grow">
           <div class="kicker">Villano · fase {s.villain.stage + 1} de {sc.villain.stages.length}</div>
           <div class="title">{v.name}</div>
@@ -142,7 +149,7 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
   return (
     <div class="hero-side">
       <div class={`hero panel${p.heroExhausted ? " exhausted" : ""}${p.eliminated ? " fallen" : ""}`} style={{ ["--hero" as string]: h.colour }}>
-        <div class="hero-art" aria-hidden="true">{hero ? h.glyph : "🙂"}</div>
+        <Portrait artKey={`${hero ? "hero" : "identity"}-${h.id}`} glyph={hero ? h.glyph : "🙂"} />
         <div class="grow">
           <div class="kicker">{hero ? "Forma de héroe" : "Identidad"}{p.heroExhausted ? " · agotado" : ""}</div>
           <div class="title">{hero ? h.hero.name : h.identity.name}</div>

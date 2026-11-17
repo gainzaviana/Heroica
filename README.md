@@ -19,9 +19,25 @@ guarda en el propio dispositivo después de cada acción.
 
 ## Contenido actual
 
-- Héroes: **Brasa Rúnica** (Kaela Voss, herrera de runas) y **Vigía del Alba** (Elian Morrow, cartógrafo), con mazos de 30.
-- Escenario: **El Eclipse de Ceniza** contra **Morvath, el Rey Ceniza** (2 fases), con los conjuntos de encuentro
-  *Rey Ceniza*, *Legión de Sombras* (modular) y *Estándar*.
+- **Héroes** (mazos de 30): **Brasa Rúnica** (Kaela Voss, herrera de runas), **Vigía del Alba** (Elian Morrow,
+  cartógrafo), **Guardián de Piedra** (Bruna Halder, cantera; muy resistente) y **Sombra Errante** (Liss Corvel,
+  ladrona; rápida y con mucho robo).
+- **Escenarios:** *El Eclipse de Ceniza* contra **Morvath, el Rey Ceniza**; *La Marea Negra* contra **Vesperia, la
+  Bruja de las Mareas**; *El Asedio de Hierro* contra **Gorvak, el Señor del Asedio**. Cada uno con su conjunto de
+  encuentros, un conjunto modular (*Legión de Sombras* o *Culto de la Luna Rota*) y el *Estándar*.
+- **Arte:** cada carta, héroe y villano tiene su ilustración 3D (toon) en `src/assets/art/*.webp`.
+
+## Arte de las cartas
+
+Las ilustraciones salen de esculturas 3D descritas en código (`tools/art/designs/*.ts`, motor en
+`tools/art/sculpt.ts`) y se renderizan con Chrome:
+
+```sh
+node tools/art/render.mjs list                         # qué cartas tienen diseño
+node tools/art/render.mjs preview /tmp/x.png martillo-runico,torre-vigia
+node tools/art/render.mjs build                        # genera src/assets/art/*.png
+python3 tools/art/webp.py                              # las pasa a WebP (necesita Pillow)
+```
 
 ## Desarrollo
 

@@ -3,12 +3,12 @@ import { useState } from "preact/hooks";
 import "./styles.css";
 import { HEROES, SCENARIOS } from "./data/content";
 import { store, useStore } from "./ui/store";
-import { Modal, Rules, Table } from "./ui/Table";
+import { Modal, Portrait, Rules, Table } from "./ui/Table";
 
 /** Start: choose one or two heroes and a scenario, or continue the saved game. */
 function Start() {
   const [heroes, setHeroes] = useState<string[]>([HEROES[0].id]);
-  const [scenario] = useState(SCENARIOS[0].id);
+  const [scenario, setScenario] = useState(SCENARIOS[0].id);
   const [rules, setRules] = useState(false);
   const toggle = (id: string) => setHeroes(heroes.includes(id) ? heroes.filter((h) => h !== id) : heroes.length >= 2 ? [heroes[1], id] : [...heroes, id]);
   const sc = SCENARIOS.find((x) => x.id === scenario)!;
@@ -26,7 +26,7 @@ function Start() {
             const on = heroes.includes(h.id);
             return (
               <button key={h.id} class={`pick${on ? " on" : ""}`} style={{ ["--hero" as string]: h.colour }} onClick={() => toggle(h.id)} aria-pressed={on}>
-                <span class="pick-art" aria-hidden="true">{h.glyph}</span>
+                <Portrait artKey={`hero-${h.id}`} glyph={h.glyph} />
                 <span class="title">{h.hero.name}</span>
                 <span class="muted small">{h.identity.name}</span>
                 <span class="statline small"><span>⚔{h.hero.fuerza}</span><span>✦{h.hero.ingenio}</span><span>⛨{h.hero.aguante}</span><span>♥{h.vida}</span></span>
@@ -39,7 +39,15 @@ function Start() {
       </section>
       <section class="panel">
         <div class="kicker">Escenario</div>
-        <div class="title">{sc.villain.glyph} {sc.name}</div>
+        <div class="scenario-pick">
+          {SCENARIOS.map((x) => (
+            <button key={x.id} class={`pick scenario${x.id === scenario ? " on" : ""}`} onClick={() => setScenario(x.id)} aria-pressed={x.id === scenario}>
+              <Portrait artKey={`villain-${x.id}`} glyph={x.villain.glyph} />
+              <span class="title">{x.name}</span>
+              <span class="muted small">{x.villain.name}</span>
+            </button>
+          ))}
+        </div>
         <p class="muted">{sc.intro}</p>
       </section>
       <button class="act gold wide big" disabled={!heroes.length} onClick={() => store.start(scenario, heroes)}>

@@ -17,7 +17,7 @@ export type Target =
   | "eachHero";
 
 export type Effect =
-  | { do: "damage"; target: Target; amount: number; ifUpgrade?: number }
+  | { do: "damage"; target: Target; amount: number; ifUpgrade?: number; stun?: boolean }
   | { do: "thwart"; target: Target; amount: number }
   | { do: "addThreat"; target: Target; amount: number }
   | { do: "heal"; target: Target; amount: number }
