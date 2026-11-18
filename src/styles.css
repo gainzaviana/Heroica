@@ -210,3 +210,23 @@ button:disabled { opacity: 0.45; cursor: default; }
 .combo { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); top: calc(60px + env(safe-area-inset-top)); width: min(560px, calc(100vw - 24px)); border-top: 5px solid var(--gold); animation: rise 0.25s; }
 .combo .cards { margin: 6px 0; }
 .res-row { gap: 6px; margin-top: 3px; } .res-row .card-res i.res { width: 18px; height: 18px; font-size: 11px; }
+
+/* Villain phase walkthrough */
+.vphase-backdrop { z-index: 45; }
+.vphase { border-top: 5px solid var(--red); display: flex; flex-direction: column; gap: 8px; }
+.vsteps { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 58dvh; overflow: auto; }
+.vstep { border: 1px solid var(--line); border-left: 5px solid var(--gold); border-radius: 12px; padding: 8px 10px; background: #fff; animation: rise 0.25s; }
+.vstep.step-2 { border-left-color: var(--red); } .vstep.step-3 { border-left-color: var(--purple); }
+.vstep-head { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.vstep .cards { margin: 6px 0 2px; }
+.vcard { display: flex; gap: 8px; align-items: center; max-width: 340px; }
+.vcard .small { flex: 1; min-width: 0; }
+.vlines { margin: 4px 0 0; padding-left: 18px; font-size: 14px; line-height: 1.45; }
+.chip.counters { position: absolute; top: auto; bottom: 26px; right: 6px; left: auto; background: #2c2433; color: #fff; }
+.sources { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.source { border: 1px dashed var(--line); background: #fff; border-radius: 10px; padding: 8px 10px; font-weight: 700; min-height: 44px; }
+.source.on { border-style: solid; border-color: var(--blue); background: var(--blue-soft); }
+.log details { border-bottom: 1px solid var(--line); padding: 6px 0; }
+.log summary { font-weight: 800; cursor: pointer; min-height: 32px; display: flex; align-items: center; }
+.log ol { padding-left: 18px; margin: 4px 0; }
+.log li.v { color: #7a2d22; }

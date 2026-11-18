@@ -18,7 +18,10 @@ export type Target =
   | "lastTarget" // the enemy the previous effect hit
   | "chooseOtherEnemy" // an enemy other than lastTarget
   | "allCharacters" // villain, every minion, every hero and every ally
-  | "thisCard"; // the card whose ability or ally action this is
+  | "thisCard" // the card whose ability or ally action this is
+  | "allEnemies" // the villain and every minion
+  | "allAllies" // every ally of this player
+  | "chooseAlly"; // one of your allies
 
 /** Printed resource types. Comodín counts as any type. */
 export type ResType = "energia" | "mental" | "fisico" | "comodin";
@@ -35,6 +38,12 @@ export type Effect =
       traitBonus?: { trait: string; amount: number };
       /** Paid with this type: damage beyond what kills a minion carries over to the villain. */
       overkillIfPaid?: ResType;
+      /** +amount per resource of this type paid (Comodín counts). */
+      perPaid?: { res: ResType; amount: number };
+      /** +amount per printed resource of this type in your hand. */
+      perHeld?: { res: ResType; amount: number };
+      /** +amount per counter on the acting card. */
+      perCounter?: number;
     }
   | {
       do: "thwart"; target: Target; amount: number;
@@ -46,7 +55,7 @@ export type Effect =
     }
   | { do: "addThreat"; target: Target; amount: number }
   | { do: "heal"; target: Target; amount: number }
-  | { do: "draw"; amount: number }
+  | { do: "draw"; amount: number; ifPaid?: ResType } // ifPaid: only if paid with that type
   | { do: "prevent"; amount: number } // during a defence: less damage
   | { do: "stun"; target: Target } // the enemy skips its next activation
   | { do: "readyHero" }
@@ -66,14 +75,24 @@ export type Effect =
   | { do: "mill"; amount: number; damagePer?: { res: ResType; amount: number }; branches?: Partial<Record<Exclude<ResType, "comodin">, Effect[]>> }
   | { do: "ifKilled"; effects: Effect[] } // only if the previous damage defeated an enemy
   | { do: "selfDamage"; amount: number } // the acting ally takes damage (consequential damage)
-  | { do: "discardSelf" }; // the acting ally is discarded
+  | { do: "discardSelf" } // the acting card is discarded
+  | { do: "addCounter"; amount: number; perPaid?: ResType } // counters on the acting card (perPaid: one per resource of that type paid)
+  | { do: "readyAllies" }
+  | { do: "buffAlly"; target: Target; fuerza?: number; ingenio?: number; vida?: number } // permanent bonus to one ally
+  | { do: "recallAlly" } // an ally from your discard back to your hand
+  /** Resolve the action ability of every card in play with this trait (without exhausting them);
+   *  the one you choose as primary gets +primaryBonus to its first amount. */
+  | { do: "triggerAll"; trait: string; primaryBonus: number }
+  | { do: "drone"; amount: number } // the top cards of your deck come into play face down as Drones engaged with you
+  | { do: "discardUpgrade" }; // discard one of your upgrades (the most expensive)
 
 /** When a card's ability can be used. */
 export type Timing =
   | "action" // on your turn
   | "defend" // interrupt: while an enemy attacks you, before damage
   | "afterAttack" // response: after an enemy attacked you
-  | "afterUpgrade"; // response: after you play an upgrade
+  | "afterUpgrade" // response: after you play an upgrade
+  | "villainAttack"; // response: after the villain starts an attack against you
 
 export interface Ability {
   timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string; heroOnly?: boolean;
@@ -81,6 +100,8 @@ export interface Ability {
   payFor?: ResType;
   /** Without such a card you can't use it. */
   payRequired?: boolean;
+  /** Only in identity form. */
+  identityOnly?: boolean;
 }
 
 // MARK: Cards
@@ -116,8 +137,15 @@ export interface PlayerCardDef {
   traits?: string[];
   /** Events: what they do when played, and when they can be played. */
   play?: { timing: Timing; effects: Effect[]; heroOnly?: boolean };
-  /** Supports/upgrades with an ability. */
+  /** Supports/upgrades with an ability (a second one in `abilities`). */
   ability?: Ability;
+  abilities?: Ability[];
+  /** Exhaust it while paying for a card: it gives this resource. */
+  resourceAbility?: { res: ResType; amount: number };
+  /** Counters it enters play with; a resource card with counters is discarded when they run out. */
+  uses?: number;
+  /** Upgrades: after an enemy attacks your hero, deal this much damage to it. */
+  retaliate?: number;
   glyph: string;
 }
 
@@ -133,8 +161,15 @@ export interface EncounterCardDef {
   sidePlan?: { amenaza: number; aceleracion?: boolean };
   /** Treachery effects, or minion/plan effects when revealed. */
   reveal?: Effect[];
-  /** Attachments: added to the villain's stats. */
-  villainBonus?: { fuerza?: number; plan?: number };
+  /** Attachments and side plans: added to the villain's stats while in play. */
+  villainBonus?: { fuerza?: number; plan?: number; vida?: number };
+  /** Attachments: every Drone gets +n Fuerza, Plan and Vida. */
+  droneBonus?: number;
+  /** As a boost card: this also happens (shown as "⚡ Refuerzo"). */
+  boostEffect?: Effect[];
+  boostText?: string;
+  /** Minions: statuses they enter play with. */
+  startStatus?: StatusKind[];
   /** Attachments: discarded after the villain's next attack. */
   oneShot?: boolean;
   glyph: string;
@@ -146,7 +181,15 @@ export interface HeroDef {
     name: string; fuerza: number; ingenio: number; aguante: number; mano: number; text: string;
     /** Hero form: +1 hand size per card in play with this trait, up to `max`. */
     manoPorRasgo?: { trait: string; max: number };
+    /** At the end of your turn in hero form, discard your whole hand before drawing. */
+    discardHandAtEnd?: boolean;
+    /** After an enemy attacks you in hero form, deal this much damage to it. */
+    retaliate?: number;
   };
+  /** Identity form: once per round, a free resource when paying for a card. */
+  identityResource?: { res: ResType; amount: number };
+  /** Setup: this card starts in your hand. */
+  setupToHand?: string;
   identity: { name: string; recuperacion: number; mano: number; text: string };
   vida: number;
   /** The hero's own once-per-round ability (hero form). */
@@ -166,7 +209,15 @@ export interface VillainStage {
   name: string; vidaPorJugador: number; fuerza: number; plan: number; text?: string;
   /** When this stage comes into play: attach a card found in the encounter deck or discard, and/or gain Duro. */
   onReveal?: { attach?: string; tough?: boolean };
+  /** Boost cards dealt to each of its activations (default 1). */
+  boosts?: number;
+  /** When it attacks you: this many Drones come into play first. */
+  dronesOnAttack?: number;
+  /** +Fuerza per Drone engaged with the hero it attacks. */
+  fuerzaPorDron?: number;
 }
+
+export interface MainPlanDef { name: string; inicioPorJugador: number; aceleracionPorJugador: number; limitePorJugador: number; text: string }
 
 export interface ScenarioDef {
   id: string;
@@ -178,7 +229,11 @@ export interface ScenarioDef {
      *  `expert` replaces the generic expert bonus (+1 Fuerza, +2 vida por jugador). */
     stagesFor?: { normal: number[]; expert: number[] };
   };
-  mainPlan: { name: string; inicioPorJugador: number; aceleracionPorJugador: number; limitePorJugador: number; text: string };
+  mainPlan: MainPlanDef;
+  /** Later main plan stages: completing one advances to the next; completing the last loses. */
+  nextPlans?: MainPlanDef[];
+  /** Side plans (found in the encounter sets) that start in play. */
+  setupSidePlans?: string[];
   encounterSets: string[];
   /** Sets added in Expert mode (default: the shared "experto" set). */
   expertSets?: string[];
@@ -190,6 +245,9 @@ export type Zone = "deck" | "hand" | "discard" | "play" | "removed";
 
 export interface CardInPlay extends Statuses {
   uid: string;
+  counters?: number;
+  /** Permanent bonuses (allies). */
+  buff?: { fuerza?: number; ingenio?: number; vida?: number };
   def: string;
   exhausted: boolean;
   damage: number;
@@ -197,7 +255,8 @@ export interface CardInPlay extends Statuses {
   usedThisRound?: boolean;
 }
 
-export interface MinionState extends Statuses { uid: string; def: string; damage: number }
+/** A minion. A Drone is a player card (its uid) played face down with the "dron" definition. */
+export interface MinionState extends Statuses { uid: string; def: string; damage: number; drone?: boolean }
 
 export interface PlanState { uid: string; def: string | "main"; threat: number }
 
@@ -221,6 +280,7 @@ export interface PlayerState {
   engaged: MinionState[];
   eliminated: boolean;
   identityAbilityUsed?: boolean;
+  identityResUsed?: boolean;
   /** Nemesis cards set aside (uids) until they come into play. */
   nemesis?: string[];
 }
@@ -240,10 +300,12 @@ export interface Prompt {
 
 export type Resume =
   | { r: "effects"; player: number; effects: Effect[]; index: number; source?: string; ctx?: EffectCtx }
-  | { r: "defense"; player: number; attacker: string; amount: number; boost: number }
-  | { r: "interrupts"; player: number; attacker: string; amount: number; defender: string | null; prevented: number }
+  /** oneShots: one-use attachments that were on the villain when this attack started (they go after it). */
+  | { r: "defense"; player: number; attacker: string; amount: number; boost: number; oneShots?: string[] }
+  | { r: "interrupts"; player: number; attacker: string; amount: number; defender: string | null; prevented: number; oneShots?: string[] }
   | { r: "afterAttack"; player: number; attacker: string }
-  | { r: "abilityPay"; player: number; card: string }
+  /** src: "hero", "identity" or "<card uid>#<ability index>". */
+  | { r: "abilityPay"; player: number; src: string }
   | { r: "villainStep" };
 
 export interface EffectCtx {
@@ -283,6 +345,13 @@ export interface GameState {
   villainQueue: VillainStep[];
   prompt: Prompt | null;
   log: { round: number; text: string }[];
+  /** Main plan stage (index into mainPlan + nextPlans). */
+  mainStage?: number;
+  /** The last villain phase, step by step (for the paced breakdown). */
+  phaseReport?: ReportEntry[];
+  reportRound?: number;
+  /** Set when hidden cards were seen (draws, shuffles, deck reveals): the interface drops its undo. */
+  revealed?: boolean;
   /** The last card-combo that read discarded cards (for the on-screen summary). */
   combo?: { n: number; title: string; cards: string[]; text: string };
   result?: "victoria" | "derrota";
@@ -297,3 +366,6 @@ export type VillainStep =
   | { s: "deal" }
   | { s: "reveal"; player: number; card: string }
   | { s: "endRound" };
+
+/** One step of the villain phase: what happened and the cards involved (boosts, encounter cards). */
+export interface ReportEntry { n: number; step: 1 | 2 | 3; title: string; lines: string[]; cards: string[] }

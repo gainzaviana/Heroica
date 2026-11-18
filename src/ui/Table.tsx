@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import {
-  allyCards, canPlay, ecard, enemiesFor, handSize, heroName, heroOf, heroStats, mainPlan, otherCards, paidByType, pcard, planLimit, planName, RES_ICON, resourcesOf, scenarioOf, stageList, villainStats,
+  abilitiesOf, allyCards, allyStats, canPlay, ecard, enemiesFor, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
+  planLimit, planName, RES_ICON, resourcesOf, resourceSources, scenarioOf, stageList, villainStats,
 } from "../engine/game";
 import type { ResType } from "../engine/types";
 import type { GameState } from "../engine/types";
@@ -17,7 +18,7 @@ export function Portrait({ artKey, glyph }: { artKey: string; glyph: string }) {
 
 type Sheet =
   | { k: "card"; uid: string }
-  | { k: "pay"; uid: string; pay: string[] }
+  | { k: "pay"; uid: string; pay: string[]; extra: string[] }
   | { k: "end"; discard: string[] }
   | { k: "enc"; def: string; damage?: number }
   | { k: "ally"; uid: string }
@@ -36,6 +37,13 @@ export function Table() {
   useEffect(() => { setView(focus); }, [focus, s.phase, s.round]);
   const viewing = s.players[view] ? view : 0;
   const mine = viewing === s.active && s.phase === "jugadores" && !s.prompt;
+  // The villain phase is shown step by step; decisions wait until you've read what led to them.
+  const report = s.phaseReport ?? [];
+  const [walk, setWalk] = useState({ round: s.reportRound, shown: report.length, closed: true });
+  // A new villain phase (often fully resolved within one action) opens the walkthrough; reloading doesn't replay it.
+  useEffect(() => { if (s.reportRound !== undefined && walk.round !== s.reportRound) setWalk({ round: s.reportRound, shown: 1, closed: false }); }, [s.reportRound]);
+  const walking = !walk.closed && walk.round === s.reportRound && report.length > 0;
+  const pending = walking && walk.shown < report.length;
 
   return (
     <div class="table">
@@ -68,7 +76,13 @@ export function Table() {
 
       {sheet && <SheetView s={s} sheet={sheet} viewing={viewing} canAct={mine} set={setSheet} />}
       <ComboPopup s={s} />
-      {s.prompt && <PromptSheet s={s} />}
+      {walking && (
+        <VillainPhase s={s} shown={walk.shown}
+          onNext={() => setWalk({ ...walk, shown: Math.min(report.length, walk.shown + 1) })}
+          onAll={() => setWalk({ ...walk, shown: report.length })}
+          onClose={() => setWalk({ ...walk, shown: report.length, closed: true })} />
+      )}
+      {s.prompt && !pending && <PromptSheet s={s} />}
       {s.result && <EndOverlay s={s} />}
       {st.error && <div class="toast" role="status">{st.error}</div>}
     </div>
@@ -110,10 +124,10 @@ function VillainPanel({ s, viewing, canAct, onEncounter }: { s: GameState; viewi
         </div>
       )}
       <div class="panel plan">
-        <div class="kicker">Plan principal</div>
-        <div class="title">{sc.mainPlan.name}</div>
+        <div class="kicker">Plan principal{mainPlanStages(s) > 1 ? ` · fase ${(s.mainStage ?? 0) + 1} de ${mainPlanStages(s)}` : ""}</div>
+        <div class="title">{mainPlanDef(s).name}</div>
         <Meter value={plan.threat} max={limit} kind="threat" label="Amenaza" />
-        <div class="muted small">{sc.mainPlan.text} Avanza {sc.mainPlan.aceleracionPorJugador * s.players.length} por ronda.</div>
+        <div class="muted small">{mainPlanDef(s).text} Avanza {mainPlanDef(s).aceleracionPorJugador * s.players.length} por ronda.</div>
       </div>
       {s.plans.filter((x) => x.def !== "main").map((x) => {
         const d = ecard(s, x.uid);
@@ -180,14 +194,14 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
         <div class="zone-title">Enemigos contigo ({p.engaged.length})</div>
         <div class="cards">
           {p.engaged.length === 0 && <div class="empty">Nadie te acecha.</div>}
-          {p.engaged.map((m) => <EncounterCard key={m.uid} def={ENCOUNTER_CARDS.get(m.def)!} size="sm" damage={m.damage} status={m} onClick={() => onEncounter(m.def, m.damage)} />)}
+          {p.engaged.map((m) => <EncounterCard key={m.uid} def={ENCOUNTER_CARDS.get(m.def)!} size="sm" damage={m.damage} status={m} stats={minionStats(s, m)} onClick={() => onEncounter(m.def, m.damage)} />)}
         </div>
       </div>
       <div class="zone">
         <div class="zone-title">Aliados ({allyCards(s, i).length}/3)</div>
         <div class="cards">
           {allyCards(s, i).length === 0 && <div class="empty">Sin aliados.</div>}
-          {allyCards(s, i).map((c) => <PlayerCard key={c.uid} def={pcard(s, c.uid)} size="sm" exhausted={c.exhausted} damage={c.damage} status={c} onClick={() => onAlly(c.uid)} />)}
+          {allyCards(s, i).map((c) => <PlayerCard key={c.uid} def={pcard(s, c.uid)} size="sm" exhausted={c.exhausted} damage={c.damage} status={c} allyStats={allyStats(s, c)} onClick={() => onAlly(c.uid)} />)}
         </div>
       </div>
       <div class="zone">
@@ -196,8 +210,9 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           {otherCards(s, i).length === 0 && <div class="empty">Nada todavía.</div>}
           {otherCards(s, i).map((c) => {
             const d = pcard(s, c.uid);
-            const usable = canAct && d.ability?.timing === "action" && !(d.ability.cost === "exhaust" ? c.exhausted : c.usedThisRound) && (!d.ability.heroOnly || p.form === "heroe");
-            return <PlayerCard key={c.uid} def={d} size="sm" exhausted={c.exhausted} onClick={() => onAlly(c.uid)} badge={usable ? <span class="chip ready">Usar</span> : undefined} />;
+            const usable = canAct && abilitiesOf(d).some((a) => abilityReady(a, c, p.form));
+            const badge = <>{usable && <span class="chip ready">Usar</span>}{c.counters !== undefined && <span class="chip counters" title="Contadores">×{c.counters}</span>}</>;
+            return <PlayerCard key={c.uid} def={d} size="sm" exhausted={c.exhausted} onClick={() => onAlly(c.uid)} badge={badge} />;
           })}
         </div>
       </div>
@@ -237,7 +252,7 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
         <Modal onClose={close}>
           <div class="center"><PlayerCard def={d} size="lg" /></div>
           {d.flavor && <p class="muted small center">{d.flavor}</p>}
-          {canAct && !why && <button class="act gold wide" onClick={() => d.cost === 0 ? (store.act({ a: "play", player: viewing, card: sheet.uid, pay: [] }), close()) : set({ k: "pay", uid: sheet.uid, pay: [] })}>Jugar{d.cost ? ` (coste ${d.cost})` : ""}</button>}
+          {canAct && !why && <button class="act gold wide" onClick={() => d.cost === 0 ? (store.act({ a: "play", player: viewing, card: sheet.uid, pay: [] }), close()) : set({ k: "pay", uid: sheet.uid, pay: [], extra: [] })}>Jugar{d.cost ? ` (coste ${d.cost})` : ""}</button>}
           {canAct && why && <div class="hint center">{why}</div>}
           <button class="act ghost wide" onClick={close}>Cerrar</button>
         </Modal>
@@ -246,17 +261,31 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
     case "pay": {
       if (!p.hand.includes(sheet.uid)) { close(); return null; }
       const d = pcard(s, sheet.uid);
-      const total = resourcesOf(s, sheet.pay);
+      const sources = resourceSources(s, viewing);
+      const chosen = sources.filter((r) => sheet.extra.includes(r.id));
+      const total = resourcesOf(s, sheet.pay) + chosen.reduce((a, r) => a + r.amount, 0);
+      const paid = paidByType(s, sheet.pay);
+      for (const r of chosen) paid[r.res] = (paid[r.res] ?? 0) + r.amount;
       const toggle = (u: string) => set({ ...sheet, pay: sheet.pay.includes(u) ? sheet.pay.filter((x) => x !== u) : [...sheet.pay, u] });
+      const toggleExtra = (id: string) => set({ ...sheet, extra: sheet.extra.includes(id) ? sheet.extra.filter((x) => x !== id) : [...sheet.extra, id] });
       return (
         <Modal onClose={close}>
           <div class="kicker">Pagar {d.name}</div>
           <div class="title">Descarta cartas por {d.cost} recursos · llevas {total}</div>
-          <div class="muted small">Pagas: <PaidLine paid={paidByType(s, sheet.pay)} />{payHint(d.text)}</div>
+          <div class="muted small">Pagas: <PaidLine paid={paid} />{payHint(d.text)}</div>
+          {sources.length > 0 && (
+            <div class="sources">
+              {sources.map((r) => (
+                <button key={r.id} class={`source${sheet.extra.includes(r.id) ? " on" : ""}`} aria-pressed={sheet.extra.includes(r.id)} onClick={() => toggleExtra(r.id)}>
+                  {RES_ICON[r.res].repeat(r.amount)} {r.label}{r.id === "identity" ? " (una vez por ronda)" : ""}
+                </button>
+              ))}
+            </div>
+          )}
           <div class="cards wrap">
             {p.hand.filter((u) => u !== sheet.uid).map((u) => <PlayerCard key={u} def={pcard(s, u)} size="sm" selected={sheet.pay.includes(u)} onClick={() => toggle(u)} />)}
           </div>
-          <button class="act gold wide" disabled={total < d.cost} onClick={() => { if (!store.act({ a: "play", player: viewing, card: sheet.uid, pay: sheet.pay })) close(); }}>Pagar y jugar</button>
+          <button class="act gold wide" disabled={total < d.cost} onClick={() => { if (!store.act({ a: "play", player: viewing, card: sheet.uid, pay: sheet.pay, extra: sheet.extra })) close(); }}>Pagar y jugar</button>
           <button class="act ghost wide" onClick={close}>Cancelar</button>
         </Modal>
       );
@@ -290,30 +319,43 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
       const c = p.play.find((x) => x.uid === sheet.uid);
       if (!c) { close(); return null; }
       const d = PLAYER_CARDS.get(c.def)!;
-      const usable = d.ability?.timing === "action" && !(d.ability.cost === "exhaust" ? c.exhausted : c.usedThisRound) && (!d.ability.heroOnly || p.form === "heroe");
+      const ast = d.ally && allyStats(s, c);
       return (
         <Modal onClose={close}>
-          <div class="center"><PlayerCard def={d} size="lg" exhausted={c.exhausted} damage={c.damage} status={c} /></div>
-          {canAct && d.ally && !c.exhausted && (
+          <div class="center"><PlayerCard def={d} size="lg" exhausted={c.exhausted} damage={c.damage} status={c} allyStats={ast} /></div>
+          {c.counters !== undefined && <div class="hint center">Contadores: {c.counters}</div>}
+          {canAct && ast && !c.exhausted && (
             <div class="row gap">
-              <button class="act red grow" onClick={() => { store.act({ a: "allyAttack", player: viewing, ally: c.uid }); close(); }}>Atacar ({d.ally.fuerza})</button>
-              <button class="act blue grow" onClick={() => { store.act({ a: "allyThwart", player: viewing, ally: c.uid }); close(); }}>Contener ({d.ally.ingenio})</button>
+              <button class="act red grow" onClick={() => { store.act({ a: "allyAttack", player: viewing, ally: c.uid }); close(); }}>Atacar ({ast.fuerza})</button>
+              <button class="act blue grow" onClick={() => { store.act({ a: "allyThwart", player: viewing, ally: c.uid }); close(); }}>Contener ({ast.ingenio})</button>
             </div>
           )}
-          {canAct && usable && <button class="act gold wide" onClick={() => { store.act({ a: "useCard", player: viewing, card: c.uid }); close(); }}>{d.ability!.text}</button>}
+          {canAct && abilitiesOf(d).map((a, k) => a.timing === "action" && (
+            <button key={k} class="act gold wide" disabled={!abilityReady(a, c, p.form)} onClick={() => { store.act({ a: "useCard", player: viewing, card: c.uid, index: k }); close(); }}>{a.text}</button>
+          ))}
           {c.exhausted && <div class="hint center">Agotada: se prepara al terminar tu turno.</div>}
           <button class="act ghost wide" onClick={close}>Cerrar</button>
         </Modal>
       );
     }
-    case "log":
+    case "log": {
+      // One collapsible section per round, newest first; the current round starts open.
+      const rounds = [...new Set(s.log.map((l) => l.round))].reverse();
       return (
-        <Modal onClose={close}>
+        <Modal onClose={close} wide label="Registro de la partida">
           <div class="kicker">Registro de la partida</div>
-          <ol class="log">{[...s.log].reverse().map((l, k) => <li key={k}><span class="muted">R{l.round}</span> {l.text}</li>)}</ol>
+          <div class="log">
+            {rounds.map((r) => (
+              <details key={r} open={r === s.round}>
+                <summary>Ronda {r}</summary>
+                <ol>{s.log.filter((l) => l.round === r).map((l, k) => <li key={k} class={/^(Fase del villano|Paso|Carta de refuerzo|Encuentro|Resultado|Fuerza|Plan \d|Base:)/.test(l.text) ? "v" : ""}>{l.text}</li>)}</ol>
+              </details>
+            ))}
+          </div>
           <button class="act ghost wide" onClick={close}>Cerrar</button>
         </Modal>
       );
+    }
     case "rules":
       return <Modal onClose={close}><Rules /><button class="act ghost wide" onClick={close}>Cerrar</button></Modal>;
     case "menu":
@@ -326,6 +368,58 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
         </Modal>
       );
   }
+}
+
+/** Whether an action ability of a card in play can be used now (form, exhaustion, once per round). */
+function abilityReady(a: ReturnType<typeof abilitiesOf>[number], c: { exhausted: boolean; usedThisRound?: boolean }, form: "heroe" | "identidad") {
+  if (a.timing !== "action") return false;
+  if (a.heroOnly && form !== "heroe") return false;
+  if (a.identityOnly && form !== "identidad") return false;
+  return a.cost === "exhaust" ? !c.exhausted : a.cost === "once" ? !c.usedThisRound : true;
+}
+
+const STEP_NAME = { 1: "Amenaza", 2: "Activación", 3: "Encuentro" } as const;
+
+/** The villain phase, one step at a time: what happened, the boost and encounter cards, and the numbers. */
+function VillainPhase({ s, shown, onNext, onAll, onClose }: { s: GameState; shown: number; onNext: () => void; onAll: () => void; onClose: () => void }) {
+  const report = s.phaseReport ?? [];
+  const steps = report.slice(0, Math.max(1, shown));
+  const more = shown < report.length;
+  const waiting = !more && !!s.prompt;
+  const done = !more && !s.prompt;
+  useEffect(() => { document.getElementById(`vstep-${steps.length}`)?.scrollIntoView({ block: "nearest", behavior: "smooth" }); }, [steps.length]);
+  return (
+    <div class="modal-backdrop vphase-backdrop">
+      <div class="modal panel wide vphase" role="dialog" aria-label="Fase del villano">
+        <div class="row">
+          <div class="grow">
+            <div class="kicker">Fase del villano · ronda {s.reportRound}</div>
+            <div class="title">{steps.length} de {report.length} pasos</div>
+          </div>
+          {more && <button class="ghost" onClick={onAll}>Ver todo</button>}
+        </div>
+        <ol class="vsteps">
+          {steps.map((e) => (
+            <li key={e.n} id={`vstep-${e.n}`} class={`vstep step-${e.step}`}>
+              <div class="vstep-head"><span class="chip">{STEP_NAME[e.step]}</span> <span class="strong">{e.title.replace(/^Paso \d · /, "")}</span></div>
+              {e.cards.length > 0 && (
+                <div class="cards">
+                  {e.cards.map((d, k) => {
+                    const def = ENCOUNTER_CARDS.get(d)!;
+                    return <div key={k} class="vcard"><EncounterCard def={def} size="sm" /><span class="small">{e.step === 2 ? `Refuerzo ${def.boost ? "⭐".repeat(def.boost) : "—"}` : def.text}</span></div>;
+                  })}
+                </div>
+              )}
+              <ul class="vlines">{e.lines.map((l, k) => <li key={k}>{l}</li>)}</ul>
+            </li>
+          ))}
+        </ol>
+        {more && <button class="act gold wide" onClick={onNext} autoFocus>Siguiente paso</button>}
+        {waiting && <div class="hint center">Te toca decidir ↓</div>}
+        {done && <button class="act gold wide" onClick={onClose} autoFocus>{s.result ? "Ver resultado" : `Empezar la ronda ${s.round}`}</button>}
+      </div>
+    </div>
+  );
 }
 
 /** Resources by type, e.g. "⚡⚡ 🧠 ✊✊". */
@@ -408,6 +502,9 @@ export function Rules() {
       <p><b>Fase del villano:</b> el plan principal avanza; el villano y tus esbirros <b>atacan</b> si estás en forma de héroe (puedes defenderte con el héroe o bloquear con un aliado) o <b>traman</b> si eres identidad (añaden amenaza). La carta de refuerzo ✹ suma a su ataque o plan. Después cada jugador recibe una carta de encuentro: esbirros, traiciones, planes secundarios o vínculos.</p>
       <p><b>Guardia:</b> mientras un esbirro con Guardia esté contigo, no puedes atacar al villano. <b>Aceleración:</b> el plan principal avanza más cada ronda.</p>
       <p><b>Experto:</b> el villano gana +1 Fuerza y +2 vida por jugador en cada fase, y el mazo de encuentros incluye cartas más duras. Algunos escenarios cambian esto: en <i>El Asalto al Arsenal</i>, Experto usa las fases II y III del villano y su propio conjunto Experto.</p>
+      <p><b>Fase del villano, paso a paso:</b> 1) el plan principal gana amenaza (base + aceleración); 2) el villano y cada esbirro atacan (si estás en forma de héroe) o traman (si eres identidad); el villano recibe carta(s) de refuerzo ⭐ que suman a su ataque o plan, y algunas tienen un efecto ⚡ Refuerzo; 3) cada jugador recibe una carta de encuentro. Puedes revisar cada paso en el Registro.</p>
+      <p><b>Planes en varias fases:</b> en algunos escenarios, completar el plan principal no es la derrota: pasa a su siguiente fase. <b>Drones:</b> cartas de tu propio mazo boca abajo que luchan contra ti (1/1/1); al derrotarlos vuelven a tu descarte.</p>
+      <p><b>Deshacer:</b> puedes deshacer un solo paso de tu turno, y no después de robar o revelar cartas.</p>
       <p><b>Recursos:</b> cada carta lleva impreso su tipo: ⚡ Energía, 🧠 Mental, ✊ Físico o 🌟 Comodín (cuenta como cualquiera). Algunas cartas mejoran según el tipo con que pagues, y otras leen los iconos de las cartas que descartan de tu mazo.</p>
       <p><b>Estados</b> (héroes, aliados, villano y esbirros; nunca dos iguales a la vez): 💫 <b>Aturdido</b> cancela su próximo ataque básico; 🌀 <b>Confundido</b> cancela su próximo contener (o tramar, si es un enemigo); 🛡️ <b>Duro</b> anula el próximo daño que reciba. Cada estado se descarta al usarse.</p>
       <p><b>Aéreo:</b> rasgo que dan algunas mejoras; otras cartas lo aprovechan. <b>Némesis:</b> cada héroe puede tener un enemigo personal apartado; cuando una carta lo llama, su esbirro se enfrenta a ti y su plan entra en juego. <b>Obligación:</b> carta personal del héroe que se baraja en los encuentros y siempre la resuelve su dueño.</p>

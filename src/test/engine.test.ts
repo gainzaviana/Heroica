@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { act, answer, canPlay, handSize, runVillain, heroOf, heroStats, mainPlan, newGame, pcard, planLimit, resourcesOf, villainStats } from "../engine/game";
+import { act, answer, canPlay, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats } from "../engine/game";
 import type { GameState } from "../engine/types";
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, PLAYER_CARDS, SCENARIOS } from "../data/content";
 
@@ -33,14 +33,15 @@ function botTurn(s: GameState): void {
     const ab = pcard(s, c.uid).ability;
     if (ab?.timing === "action" && !c.exhausted && !c.usedThisRound && p.play.includes(c)) { act(s, { a: "useCard", player: i, card: c.uid }); settle(); }
   }
-  // A hero whose hand is small in hero form goes back to its identity to draw more.
-  if (!s.result && p.form === "heroe" && !p.flippedThisTurn && heroOf(p).identity.mano > handSize(s, i) + 1) { act(s, { a: "flip", player: i }); settle(); }
+  // Back to the identity to draw more (small hero hand) or to recover when badly hurt.
+  const hurt = p.damage >= heroStats(s, i).vidaMax * 0.6;
+  if (!s.result && p.form === "heroe" && !p.flippedThisTurn && (hurt || heroOf(p).identity.mano > handSize(s, i) + 1)) { act(s, { a: "flip", player: i }); settle(); }
   if (!s.result && p.form === "identidad" && heroOf(p).identityAbility && !p.identityAbilityUsed) { act(s, { a: "identityAbility", player: i }); settle(); }
   if (!s.result) act(s, { a: "endTurn", player: i, discard: [] });
   settle();
 }
 
-function play(heroes: string[], seed: number, scenario = "eclipse-ceniza") {
+function play(heroes: string[], seed: number, scenario = "asalto-arsenal") {
   const s = newGame(scenario, heroes, seed, seed % 3 === 0 ? "experto" : "normal");
   const total = Object.keys(s.cards).length;
   let turns = 0;
@@ -57,14 +58,14 @@ function cardsAccounted(s: GameState): number {
 
 describe("Heroica engine", () => {
   it("sets up a game: hands, main plan, encounter deck", () => {
-    const s = newGame("eclipse-ceniza", ["brasa"], 1);
+    const s = newGame("asalto-arsenal", ["vanguardia"], 1);
     expect(s.players[0].hand).toHaveLength(6);
     expect(mainPlan(s).threat).toBe(0);
     expect(s.encounterDeck.length).toBeGreaterThan(10);
-    expect(villainStats(s).vidaMax).toBe(10);
-    const x = newGame("eclipse-ceniza", ["celeste"], 1, "experto");
-    expect(villainStats(x).vidaMax).toBe(12);
-    expect(x.encounterDeck.length).toBe(s.encounterDeck.length + 2);
+    expect(villainStats(s).vidaMax).toBe(14);
+    const x = newGame("asalto-arsenal", ["vanguardia"], 1, "experto");
+    expect(villainStats(x).vidaMax).toBe(15);
+    expect(x.encounterDeck.length).toBe(s.encounterDeck.length + 3 - 1); // +3 expert, −1 Embestida attached
   });
 
   it("plays complete solo and two-handed games to an end without losing cards", () => {
@@ -72,7 +73,7 @@ describe("Heroica engine", () => {
     let rounds = 0;
     for (let seed = 1; seed <= 12; seed++) {
       for (const scenario of SCENARIOS.map((x) => x.id))
-      for (const heroes of [["brasa"], ["vigia"], ["guardian"], ["sombra"], ["celeste"], ["vanguardia"], ["brasa", "vigia"], ["guardian", "sombra"], ["celeste", "brasa"], ["vanguardia", "guardian"]]) {
+      for (const heroes of [...HEROES.map((h) => [h.id]), ["vanguardia", "funambula"], ["mole", "centella"], ["soberano", "vanguardia"]]) {
         const { s, total } = play(heroes, seed, scenario);
         expect(s.result, `seed ${seed} ${scenario} ${heroes}`).toBeDefined();
         expect(cardsAccounted(s), `seed ${seed} ${scenario} ${heroes}: cartas`).toBe(total);
@@ -87,20 +88,20 @@ describe("Heroica engine", () => {
   });
 
   it("asks for a defence when the villain attacks a hero", () => {
-    const s = newGame("eclipse-ceniza", ["brasa"], 3);
+    const s = newGame("asalto-arsenal", ["vanguardia"], 3);
     act(s, { a: "flip", player: 0 });
     act(s, { a: "endTurn", player: 0, discard: [] });
     expect(s.phase).toBe("villano");
     expect(s.prompt?.kind).toBe("defense");
     const before = s.players[0].damage;
     answer(s, "hero");
-    // Defended: Aguante 2 against Fuerza 1 + boost.
+    // Defended: Aguante 1 against Fuerza 2 + boost.
     while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
     expect(s.players[0].damage).toBeGreaterThanOrEqual(before);
   });
 
   it("refuses illegal actions", () => {
-    const s = newGame("eclipse-ceniza", ["brasa"], 4);
+    const s = newGame("asalto-arsenal", ["vanguardia"], 4);
     expect(act(s, { a: "attack", player: 0 })).toBe("Solo en forma de héroe.");
     expect(act(s, { a: "recover", player: 1 })).toBe("No es tu turno.");
   });
@@ -337,7 +338,7 @@ describe("Recursos, estados y combos", () => {
     act(x, { a: "endTurn", player: 0, discard: [] });
     settleFirst(x);
     // Neither the villain nor the minion schemes.
-    expect(x.log.filter((l) => l.text.includes("no trama")).length).toBe(2);
+    expect(x.log.filter((l) => l.text.includes("Confundido: no trama")).length).toBe(2);
   });
 
   it("no duplicate status: a second Aturdido does nothing", () => {
@@ -491,5 +492,232 @@ describe("Recursos, estados y combos", () => {
     const kit = toPlay(s, "botiquin-campo");
     act(s, { a: "useCard", player: 0, card: kit });
     expect(p.damage).toBe(2);
+  });
+});
+
+describe("Nuevos héroes, escenarios y fase del villano", () => {
+  function setup(scenario: string, hero: string, form: "heroe" | "identidad" = "heroe", seed = 31, difficulty: "normal" | "experto" = "normal") {
+    const s = newGame(scenario, [hero], seed, difficulty);
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = form;
+    return { s, p };
+  }
+  const copies = (s: GameState, def: string) => Object.keys(s.cards).filter((u) => s.cards[u] === def);
+  function take(s: GameState, def: string, nth = 0): string {
+    const u = copies(s, def)[nth];
+    const p = s.players[0];
+    p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
+    return u;
+  }
+  const toHand = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].hand.push(u); return u; };
+  const toPlay = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].play.push({ uid: u, def, exhausted: false, damage: 0 }); return u; };
+  const villainTurn = (s: GameState) => { act(s, { a: "endTurn", player: 0, discard: [] }); };
+
+  it("Funámbula: Lía generates 🧠 once per round; Sexto sentido draws when the villain attacks", () => {
+    const { s, p } = setup("asalto-arsenal", "funambula", "identidad");
+    mainPlan(s).threat = 4;
+    const card = toHand(s, "por-aurelia");
+    expect(canPlay(s, 0, card)).toBeUndefined(); // the identity resource pays for it
+    act(s, { a: "play", player: 0, card, pay: [], extra: ["identity"] });
+    expect(mainPlan(s).threat).toBe(1); // 2 + 1 for paying 🧠
+    const again = toHand(s, "vigilancia");
+    expect(act(s, { a: "play", player: 0, card: again, pay: [], extra: ["identity"] })).toBeDefined(); // already used this round
+
+    const x = setup("asalto-arsenal", "funambula", "heroe", 32).s;
+    const before = x.players[0].hand.length;
+    villainTurn(x); // ends with a draw up to hand size, then the villain attacks
+    const drew = x.log.some((l) => l.text.includes("Sexto sentido"));
+    expect(drew).toBe(true);
+    expect(x.players[0].hand.length).toBeGreaterThan(before);
+    void p;
+  });
+
+  it("Lanzadores de Seda pay 🌟 three times, then are discarded", () => {
+    const { s, p } = setup("asalto-arsenal", "funambula");
+    const web = take(s, "lanzadores-seda");
+    p.play.push({ uid: web, def: "lanzadores-seda", exhausted: false, damage: 0, counters: 3 });
+    for (let k = 0; k < 3; k++) {
+      p.play.forEach((c) => (c.exhausted = false));
+      const card = toHand(s, ["vigilancia", "vigilancia", "por-aurelia"][k], [0, 1, 0][k]);
+      expect(act(s, { a: "play", player: 0, card, pay: [], extra: [web] })).toBeUndefined();
+    }
+    expect(p.play.some((c) => c.uid === web)).toBe(false);
+    expect(p.discard).toContain(web);
+  });
+
+  it("Mole Tronante: hand discarded at the end of a hero turn; ✊ scaling cards", () => {
+    const { s, p } = setup("asalto-arsenal", "mole");
+    expect([heroOf(p).hero.fuerza, heroOf(p).vida, handSize(s, 0)]).toEqual([3, 18, 4]);
+    const card = toHand(s, "golpe-demoledor");
+    act(s, { a: "play", player: 0, card, pay: [toHand(s, "furia-sin-limites")] });
+    expect(s.villain.damage).toBe(2 + 2);
+    const m = s.encounterDeck.find((u) => s.cards[u] === "maton-sueldo")!;
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== m);
+    p.engaged.push({ uid: m, def: "maton-sueldo", damage: 0 });
+    const clap = toHand(s, "palmada-sismica");
+    act(s, { a: "play", player: 0, card: clap, pay: [toHand(s, "pulso-fuerza"), toHand(s, "golpe-certero")] });
+    expect(s.villain.damage).toBe(6);
+    expect(p.engaged[0].damage).toBe(2);
+    const rip = toHand(s, "arrancar-suelo");
+    toHand(s, "furia-sin-limites", 1); toHand(s, "golpe-demoledor", 1);
+    act(s, { a: "play", player: 0, card: rip, pay: [toHand(s, "vigilancia")] });
+    answer(s, "villain");
+    expect(s.villain.damage).toBe(6 + 1 + 3); // ✊✊ + ✊ left in hand
+    const handBefore = p.hand.slice();
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    expect(p.discard).toEqual(expect.arrayContaining(handBefore));
+  });
+
+  it("Centella: Canal de Energía stores ⚡ and releases 2 damage per charge; Recanalizar needs ⚡", () => {
+    const { s, p } = setup("asalto-arsenal", "centella");
+    expect(act(s, { a: "heroAbility", player: 0 })).toMatch(/Necesitas descartar una carta con ⚡/);
+    const canal = toPlay(s, "canal-energia");
+    const cell = toHand(s, "pulso-cosmico");
+    act(s, { a: "useCard", player: 0, card: canal, index: 0 });
+    answer(s, cell);
+    expect(p.play.find((c) => c.uid === canal)?.counters).toBe(2);
+    act(s, { a: "useCard", player: 0, card: canal, index: 1 });
+    expect(s.villain.damage).toBe(4);
+    expect(p.discard).toContain(canal);
+
+    p.damage = 3;
+    const bolt = toHand(s, "rafaga-fotonica");
+    act(s, { a: "heroAbility", player: 0 });
+    answer(s, bolt);
+    expect(p.damage).toBe(2);
+  });
+
+  it("Vuelo Cósmico can be used from play while defending", () => {
+    const { s, p } = setup("asalto-arsenal", "centella", "heroe", 33);
+    toPlay(s, "vuelo-cosmico");
+    villainTurn(s);
+    answer(s, "hero");
+    expect(s.prompt?.options.some((o) => o.id.startsWith("play:"))).toBe(true);
+    answer(s, s.prompt!.options.find((o) => o.id.startsWith("play:"))!.id);
+    expect(p.play.find((c) => s.cards[c.uid] === "vuelo-cosmico")?.exhausted).toBe(true);
+  });
+
+  it("Soberano starts with Garras; ¡Por Oricalcia! fires every Oricalco upgrade, the primary one +1", () => {
+    const s0 = newGame("asalto-arsenal", ["soberano"], 34);
+    expect(s0.players[0].hand.map((u) => s0.cards[u])).toContain("garras-oricalco");
+    expect(s0.players[0].hand).toHaveLength(6);
+    const { s, p } = setup("asalto-arsenal", "soberano");
+    const claws = toPlay(s, "garras-oricalco");
+    toPlay(s, "ordenador-tactico");
+    mainPlan(s).threat = 5;
+    const ev = toHand(s, "por-oricalcia-f");
+    act(s, { a: "play", player: 0, card: ev, pay: [toHand(s, "pulso-fuerza")] });
+    answer(s, claws); // primary: Garras (+1)
+    while (s.prompt) answer(s, s.prompt.options[0].id);
+    expect(s.villain.damage).toBe(3);
+    expect(mainPlan(s).threat).toBe(4);
+    expect(p.play.every((c) => !c.exhausted)).toBe(true);
+  });
+
+  it("Liderazgo: Arenga buffs an ally for good, Toque de Reunión readies allies, Hacer la Llamada recalls one", () => {
+    const { s, p } = setup("asalto-arsenal", "funambula", "identidad");
+    const cap = toPlay(s, "capitana-fernandez");
+    act(s, { a: "play", player: 0, card: toHand(s, "arenga"), pay: [toHand(s, "golpe-certero")] });
+    act(s, { a: "allyAttack", player: 0, ally: cap });
+    expect(s.villain.damage).toBe(3);
+    act(s, { a: "play", player: 0, card: toHand(s, "toque-reunion"), pay: [toHand(s, "golpe-certero", 1)] });
+    expect(p.play.find((c) => c.uid === cap)?.exhausted).toBe(false);
+    const mage = take(s, "mago-errante"); p.discard.push(mage);
+    act(s, { a: "play", player: 0, card: toHand(s, "hacer-llamada"), pay: [] });
+    answer(s, mage);
+    expect(p.hand).toContain(mage);
+  });
+
+  it("Sinfonía: starts with its defence network, deals 2 boost cards, and the main plan has a second stage", () => {
+    const { s } = setup("sinfonia", "vanguardia");
+    expect(s.plans.map((x) => x.def)).toContain("red-defensa-sonica");
+    villainTurn(s);
+    const attack = s.phaseReport!.find((e) => e.step === 2)!;
+    expect(attack.cards).toHaveLength(2);
+    expect(attack.lines.some((l) => l.includes("Carta de refuerzo 2 de 2"))).toBe(true);
+    while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+
+    const x = setup("sinfonia", "vanguardia", "identidad", 35).s;
+    mainPlan(x).threat = 8;
+    villainTurn(x);
+    while (x.prompt) answer(x, x.prompt.options[0].id);
+    expect(x.result).toBeUndefined();
+    expect(x.mainStage).toBe(1);
+    expect(planLimit(x)).toBe(12);
+
+    const y = setup("sinfonia", "vanguardia", "heroe", 36).s;
+    const imm = y.encounterDeck.find((u) => y.cards[u] === "inmortalidad-sonica")!;
+    y.encounterDeck = y.encounterDeck.filter((u) => u !== imm);
+    y.plans.push({ uid: imm, def: "inmortalidad-sonica", threat: 4 });
+    expect(villainStats(y).vidaMax).toBe(12 + 10);
+  });
+
+  it("Enjambre: attacks bring Drones from your deck; defeated Drones go back to your discard", () => {
+    const { s, p } = setup("enjambre", "vanguardia");
+    villainTurn(s);
+    const d = p.engaged.find((m) => m.drone);
+    expect(d && PLAYER_CARDS.has(s.cards[d.uid])).toBe(true); // a face-down card of her own deck
+    while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+    if (s.result) return;
+    const drone = p.engaged.find((m) => m.drone)!;
+    const imp = toHand(s, "impacto-supersonico");
+    act(s, { a: "play", player: 0, card: imp, pay: [toHand(s, "pulso-fuerza"), toHand(s, "golpe-certero")] });
+    if (s.prompt) answer(s, drone.uid);
+    expect(p.engaged.some((m) => m.uid === drone.uid)).toBe(false);
+    expect(p.discard).toContain(drone.uid);
+  });
+
+  it("Enjambre: Drones Mejorados buffs Drones and stage II hits harder per Drone", () => {
+    const { s, p } = setup("enjambre", "vanguardia", "heroe", 37);
+    const d1 = p.deck.shift()!;
+    p.engaged.push({ uid: d1, def: "dron", damage: 0, drone: true });
+    const up = s.encounterDeck.find((u) => s.cards[u] === "drones-mejorados")!;
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== up);
+    s.villain.attachments.push(up);
+    expect(minionStats(s, p.engaged[0])).toMatchObject({ vida: 2, fuerza: 2, plan: 2 });
+    s.villain.stage = 1; // Nexo II: +1 Fuerza per Drone
+    villainTurn(s);
+    const step = s.phaseReport!.find((e) => e.title.includes("Nexo II ataca"))!;
+    expect(step.lines.some((l) => /por drones/.test(l))).toBe(true);
+  });
+
+  it("Enjambre has a three-stage countdown", () => {
+    const { s } = setup("enjambre", "vanguardia", "identidad", 38);
+    expect(mainPlanStages(s)).toBe(3);
+    for (const [stage, limit] of [[0, 6], [1, 7], [2, 8]]) {
+      expect(s.mainStage ?? 0).toBe(stage);
+      expect(planLimit(s)).toBe(limit);
+      mainPlan(s).threat = limit - 1;
+      villainTurn(s);
+      while (s.prompt) answer(s, s.prompt.options[0].id);
+      if (stage < 2) expect(s.result, `stage ${stage}`).toBeUndefined();
+    }
+    expect(s.result).toBe("derrota");
+  });
+
+  it("the villain phase is reported step by step: threat, activation with boost card, encounter card", () => {
+    const { s } = setup("asalto-arsenal", "vanguardia", "identidad", 39);
+    villainTurn(s);
+    while (s.prompt) answer(s, s.prompt.options[0].id);
+    const steps = s.phaseReport!.map((e) => e.step);
+    expect(steps[0]).toBe(1);
+    expect(steps).toContain(2);
+    expect(steps).toContain(3);
+    const act2 = s.phaseReport!.find((e) => e.step === 2)!;
+    expect(act2.cards.length).toBe(1);
+    expect(act2.lines.some((l) => /Plan \d+ \+ \d+ ⭐ = \+\d+ amenaza/.test(l))).toBe(true);
+    const enc = s.phaseReport!.find((e) => e.step === 3)!;
+    expect(enc.cards).toHaveLength(1);
+  });
+
+  it("drawing or revealing cards marks the state so undo is dropped", () => {
+    const { s } = setup("asalto-arsenal", "vanguardia");
+    s.revealed = false;
+    act(s, { a: "attack", player: 0 });
+    expect(s.revealed).toBe(false);
+    const forge = toPlay(s, "forja-tecnologica");
+    act(s, { a: "useCard", player: 0, card: forge });
+    expect(s.revealed).toBe(true);
   });
 });

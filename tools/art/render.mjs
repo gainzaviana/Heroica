@@ -10,7 +10,8 @@ import { fileURLToPath } from "node:url";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const [mode, a, b] = process.argv.slice(2);
-const server = await createServer({ root, logLevel: "error", server: { port: 0 } });
+// No file watching or live reload: other edits to the designs must not reload the page mid-render.
+const server = await createServer({ root, logLevel: "error", server: { port: 0, hmr: false, watch: null } });
 await server.listen();
 const url = server.resolvedUrls.local[0] + "tools/art/render.html";
 const browser = await chromium.launch({ channel: "chrome" });
@@ -26,7 +27,8 @@ try {
   } else if (mode === "build") {
     const dir = resolve(root, "src/assets/art");
     mkdirSync(dir, { recursive: true });
-    const keys = a ? a.split(",") : await page.evaluate(() => window.artDesigned());
+    // Only cards that exist: old designs whose card was removed are not rebuilt.
+    const keys = a ? a.split(",") : await page.evaluate(() => { const live = new Set(window.artKeys().map((k) => k.key)); return window.artDesigned().filter((k) => live.has(k)); });
     for (const key of keys) {
       const data = await page.evaluate((k) => window.renderArt(k, 512), key);
       if (!data) { console.log(`sin diseño: ${key}`); continue; }

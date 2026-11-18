@@ -5,12 +5,16 @@ import type { GameState } from "../engine/types";
 const KEY = "heroica.partida";
 
 /**
- * The running game: the state, undo history (within the players' phase: once the villain acts,
- * hidden cards have been seen) and saving to this device after every change.
+ * The running game: the state, a single-step undo and saving to this device after every change.
+ *
+ * Undo keeps exactly one snapshot: the state before the last player action or decision. Using it
+ * restores that snapshot and empties the buffer, so only one mistake can be taken back. The buffer
+ * is dropped as soon as hidden cards were seen (draws, shuffles, deck reveals, Drones) or the
+ * villain phase starts, so undo can never be used to peek at the deck.
  */
 class Store {
   state: GameState | null = load();
-  history: string[] = [];
+  previous: string | null = null;
   error?: string;
   private listeners = new Set<() => void>();
   private errorTimer?: ReturnType<typeof setTimeout>;
@@ -23,7 +27,7 @@ class Store {
 
   start(scenario: string, heroes: string[], difficulty: "normal" | "experto" = "normal") {
     this.state = newGame(scenario, heroes, undefined, difficulty);
-    this.history = [];
+    this.previous = null;
     this.changed();
   }
 
@@ -51,22 +55,22 @@ class Store {
 
   private record(snapshot: string) {
     const s = this.state!;
-    // Undo only within the players' phase.
-    if (s.phase === "jugadores" && JSON.parse(snapshot).phase === "jugadores") {
-      this.history.push(snapshot);
-      if (this.history.length > 40) this.history.shift();
-    } else this.history = [];
+    const before = JSON.parse(snapshot) as GameState;
+    const revealed = !!s.revealed;
+    s.revealed = false;
+    // One step back, only within the players' phase and only if nothing hidden was seen.
+    this.previous = s.phase === "jugadores" && before.phase === "jugadores" && !revealed && !s.result ? snapshot : null;
   }
 
-  get canUndo() { return this.history.length > 0; }
+  get canUndo() { return this.previous !== null; }
   undo() {
-    const snap = this.history.pop();
-    if (!snap) return;
-    this.state = JSON.parse(snap);
+    if (!this.previous) return;
+    this.state = JSON.parse(this.previous);
+    this.previous = null;
     this.changed();
   }
 
-  quit() { this.state = null; this.history = []; this.changed(); }
+  quit() { this.state = null; this.previous = null; this.changed(); }
 
   flash(text: string) {
     this.error = text;

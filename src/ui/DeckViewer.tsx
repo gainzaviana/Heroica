@@ -1,6 +1,6 @@
 import { ENCOUNTER_CARDS, PLAYER_CARDS } from "../data/content";
 import type { HeroDef, PlayerCardDef, PlayerCardType } from "../engine/types";
-import { RES_NAME } from "../engine/game";
+import { RES_ICON, RES_NAME } from "../engine/game";
 import { EncounterCard, PlayerCard, ResIcons, traitName, typeName } from "./Card";
 import { Modal, Portrait } from "./Table";
 
@@ -12,7 +12,7 @@ const GROUPS: { type: PlayerCardType; title: string }[] = [
   { type: "recurso", title: "Recursos" },
 ];
 
-const TIMING: Record<string, string> = { action: "Acción", defend: "Al defenderte", afterAttack: "Después de un ataque", afterUpgrade: "Después de jugar una mejora" };
+const TIMING: Record<string, string> = { action: "Acción", defend: "Al defenderte", afterAttack: "Después de un ataque", afterUpgrade: "Después de jugar una mejora", villainAttack: "Respuesta, cuando el villano te ataca" };
 
 /** Every card in a hero's deck, grouped by type, with counts and full text: to inspect a deck before playing. */
 export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => void }) {
@@ -56,6 +56,7 @@ export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => vo
             <div class="statline small"><span>✚ Recuperación {idn.recuperacion}</span><span>♥ Vida {hero.vida}</span><span>✋ Mano {idn.mano}</span></div>
             <p class="small">{idn.text}</p>
             {hero.identityAbility && <p class="small"><b>Acción (una vez por ronda):</b> {hero.identityAbility.text}</p>}
+            {hero.identityResource && <p class="small"><b>Recurso (una vez por ronda):</b> genera {RES_ICON[hero.identityResource.res].repeat(hero.identityResource.amount)} {RES_NAME[hero.identityResource.res]} al pagar.</p>}
           </div>
         </div>
       </section>

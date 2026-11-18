@@ -40,9 +40,12 @@ export function Art({ artKey, glyph, label }: { artKey: string; glyph: string; l
  * A card: name bar with its cost gem, art window, type band, rules text (on bigger sizes) and a
  * footer with its stats and the resources it gives when discarded to pay.
  */
-export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage, onClick, badge, status }: {
+export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage, onClick, badge, status, allyStats }: {
   def: PlayerCardDef; size?: "sm" | "md" | "lg"; selected?: boolean; dim?: boolean; exhausted?: boolean; damage?: number; onClick?: () => void; badge?: ComponentChildren; status?: Statuses;
+  /** An ally's current stats (with permanent bonuses), if they differ from the printed ones. */
+  allyStats?: { fuerza: number; ingenio: number; vida: number };
 }) {
+  const a = def.ally && (allyStats ?? def.ally);
   // Only cards you can tap are buttons; display-only cards are a labelled group.
   const Tag = onClick ? "button" : "div";
   return (
@@ -55,11 +58,11 @@ export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage,
       <span class="card-band">{TYPE_NAME[def.type]}{def.traits?.length ? ` · ${def.traits.map(traitName).join(" · ")}` : ""}</span>
       {size !== "sm" && <span class="card-body">{def.text}</span>}
       <span class="card-foot">
-        {def.ally ? (
+        {a ? (
           <span class="card-stats">
-            <span class="stat atk" title="Fuerza">{def.ally.fuerza}</span>
-            <span class="stat thw" title="Ingenio">{def.ally.ingenio}</span>
-            <span class="stat hp" title="Vida">{def.ally.vida - (damage ?? 0)}</span>
+            <span class="stat atk" title="Fuerza">{a.fuerza}</span>
+            <span class="stat thw" title="Ingenio">{a.ingenio}</span>
+            <span class="stat hp" title="Vida">{a.vida - (damage ?? 0)}</span>
           </span>
         ) : <span />}
         <ResIcons type={def.resType} n={def.resources} />
@@ -70,7 +73,12 @@ export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage,
   );
 }
 
-export function EncounterCard({ def, size = "md", damage, status, onClick }: { def: EncounterCardDef; size?: "sm" | "md" | "lg"; damage?: number; status?: Statuses; onClick?: () => void }) {
+export function EncounterCard({ def, size = "md", damage, status, onClick, stats }: {
+  def: EncounterCardDef; size?: "sm" | "md" | "lg"; damage?: number; status?: Statuses; onClick?: () => void;
+  /** A minion's current stats (Drones with bonuses), if they differ from the printed ones. */
+  stats?: { vida: number; fuerza: number; plan: number };
+}) {
+  const m = def.minion && (stats ?? def.minion);
   const Tag = onClick ? "button" : "div";
   return (
     <Tag type={onClick ? "button" : undefined} role={onClick ? undefined : "group"} class={`card card-${size} enc t-${def.type}`} onClick={onClick} aria-label={`${def.name}. ${TYPE_NAME[def.type]}. ${def.text}`}>
@@ -79,11 +87,11 @@ export function EncounterCard({ def, size = "md", damage, status, onClick }: { d
       <span class="card-band">{TYPE_NAME[def.type]}{def.minion?.guardia ? " · Guardia" : ""}{def.sidePlan?.aceleracion ? " · Aceleración" : ""}</span>
       {size !== "sm" && <span class="card-body">{def.text}</span>}
       <span class="card-foot">
-        {def.minion ? (
+        {m ? (
           <span class="card-stats">
-            <span class="stat atk" title="Fuerza">{def.minion.fuerza}</span>
-            <span class="stat sch" title="Plan">{def.minion.plan}</span>
-            <span class="stat hp" title="Vida">{def.minion.vida - (damage ?? 0)}</span>
+            <span class="stat atk" title="Fuerza">{m.fuerza}</span>
+            <span class="stat sch" title="Plan">{m.plan}</span>
+            <span class="stat hp" title="Vida">{m.vida - (damage ?? 0)}</span>
           </span>
         ) : def.sidePlan ? <span class="card-stats"><span class="stat sch" title="Amenaza">{def.sidePlan.amenaza}</span></span> : <span />}
         <span class="card-boost" title={`Refuerzo ${def.boost}`}>{Array.from({ length: def.boost }, (_, k) => <i key={k} />)}</span>
