@@ -71,6 +71,25 @@ const cards: PlayerCardDef[] = [
   { id: "golpe-espalda", name: "Golpe por la Espalda", type: "evento", cost: 2, resources: 1, glyph: "⚔",
     text: "Héroe. Acción: inflige 4 daño a un esbirro.", play: { timing: "action", heroOnly: true, effects: [{ do: "damage", target: "chooseMinion", amount: 4 }] } },
 
+  // Armadura Celeste (Teodor Valcourt): an inventor who builds his clockwork armour piece by piece.
+  { id: "peto-eter", name: "Peto de Éter", type: "mejora", cost: 3, resources: 1, glyph: "🛡", traits: ["pieza"],
+    text: "Pieza de armadura. Tu héroe obtiene +1 Aguante, +2 Vida máxima y +1 tamaño de mano.", bonus: { aguante: 1, vidaMax: 2, mano: 1 } },
+  { id: "botas-propulsoras", name: "Botas Propulsoras", type: "mejora", cost: 2, resources: 1, glyph: "👢", traits: ["pieza"],
+    text: "Pieza de armadura. Tu héroe obtiene +1 Ingenio y +1 tamaño de mano.", bonus: { ingenio: 1, mano: 1 } },
+  { id: "guanteletes-repulsores", name: "Guanteletes Repulsores", type: "mejora", cost: 2, resources: 1, glyph: "🧤", traits: ["pieza"],
+    text: "Pieza de armadura. Tu héroe obtiene +1 Fuerza y +1 tamaño de mano.", bonus: { fuerza: 1, mano: 1 } },
+  { id: "casco-analitico", name: "Casco Analítico", type: "mejora", cost: 2, resources: 1, glyph: "⛑", traits: ["pieza"],
+    text: "Pieza de armadura. +1 tamaño de mano. Acción, agota esta carta: roba 1 carta.", bonus: { mano: 1 },
+    ability: { timing: "action", cost: "exhaust", effects: [{ do: "draw", amount: 1 }], text: "Roba 1 carta" } },
+  { id: "taller-real", name: "Taller Real", type: "apoyo", cost: 1, resources: 1, glyph: "🛠",
+    text: "Acción, agota esta carta: retira 1 amenaza de un plan.", ability: { timing: "action", cost: "exhaust", effects: [{ do: "thwart", target: "choosePlan", amount: 1 }], text: "Retira 1 amenaza" } },
+  { id: "descarga-total", name: "Descarga Total", type: "evento", cost: 2, resources: 1, glyph: "🔆",
+    text: "Héroe. Acción: inflige 2 daño a un enemigo, +1 por cada pieza de armadura que tengas.", play: { timing: "action", heroOnly: true, effects: [{ do: "damage", target: "chooseEnemy", amount: 2, plusTrait: "pieza" }] } },
+  { id: "rafaga-repulsora", name: "Ráfaga Repulsora", type: "evento", cost: 1, resources: 1, glyph: "✺",
+    text: "Acción: inflige 1 daño a un enemigo, +1 por cada pieza de armadura que tengas.", play: { timing: "action", effects: [{ do: "damage", target: "chooseEnemy", amount: 1, plusTrait: "pieza" }] } },
+  { id: "automata-ayudante", name: "Autómata Ayudante", type: "aliado", cost: 2, resources: 1, glyph: "🤖",
+    text: "Aliado. Atacar o contener le cuesta 1 daño.", ally: { vida: 2, fuerza: 1, ingenio: 1, consFuerza: 1, consIngenio: 1 } },
+
   // Shared by every hero.
   { id: "pocion-curacion", name: "Poción de Curación", type: "evento", cost: 1, resources: 1, glyph: "⚗",
     text: "Acción: cura 4 daño a tu héroe.", play: { timing: "action", effects: [{ do: "heal", target: "self", amount: 4 }] } },
@@ -139,6 +158,16 @@ export const HEROES: HeroDef[] = [
     colour: "#5b4a8a",
     glyph: "🌑",
   },
+  {
+    id: "celeste",
+    hero: { name: "Armadura Celeste", fuerza: 1, ingenio: 2, aguante: 2, mano: 4, text: "Rayo de éter: una vez por ronda, como acción, inflige 1 daño a un enemigo, +1 por cada pieza de armadura. Cada pieza amplía tu mano." },
+    identity: { name: "Teodor Valcourt", recuperacion: 3, mano: 6, text: "Inventor de la corte. Su taller nunca duerme." },
+    vida: 10,
+    ability: { timing: "action", cost: "once", effects: [{ do: "damage", target: "chooseEnemy", amount: 1, plusTrait: "pieza" }], text: "Rayo de éter" },
+    deck: ["peto-eter", "botas-propulsoras", "guanteletes-repulsores", "casco-analitico", "taller-real", "descarga-total", "descarga-total", "rafaga-repulsora", "rafaga-repulsora", "rafaga-repulsora", "automata-ayudante", "golpe-certero", ...neutral],
+    colour: "#3f8fd6",
+    glyph: "⚙",
+  },
 ];
 
 // MARK: Encounter cards
@@ -174,6 +203,16 @@ const encounters: EncounterCardDef[] = [
   { id: "cultista-lunar", name: "Cultista Lunar", type: "esbirro", boost: 1, glyph: "🌘", text: "Esbirro.", minion: { vida: 2, fuerza: 1, plan: 1 } },
   { id: "ritual-oscuro", name: "Ritual Oscuro", type: "traicion", boost: 2, glyph: "🕯", text: "Añade 2 amenaza al plan principal.", reveal: [{ do: "addThreat", target: "mainPlan", amount: 2 }] },
   { id: "altar-lunar", name: "Altar Lunar", type: "plan", boost: 0, glyph: "🌙", text: "Plan secundario (3 amenaza).", sidePlan: { amenaza: 3 } },
+  // Kragor, el Coloso Embestidor
+  { id: "maton-acorazado", name: "Matón Acorazado", type: "esbirro", boost: 1, glyph: "🪓", text: "Esbirro.", minion: { vida: 3, fuerza: 2, plan: 0 } },
+  { id: "bandido-saqueador", name: "Bandido Saqueador", type: "esbirro", boost: 1, glyph: "🗡", text: "Esbirro.", minion: { vida: 2, fuerza: 1, plan: 1 } },
+  { id: "carga-imparable", name: "Carga Imparable", type: "traicion", boost: 2, glyph: "🐂", text: "En forma de héroe recibes 3 daño; si no, añade 1 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 3, ifIdentity: { do: "addThreat", amount: 1 } }] },
+  { id: "pisoton", name: "Pisotón", type: "traicion", boost: 1, glyph: "🦶", text: "El villano se activa contra ti.", reveal: [{ do: "villainActivates" }] },
+  { id: "placas-bronce", name: "Placas de Bronce", type: "vinculo", boost: 1, glyph: "🛡", text: "Vínculo: el villano obtiene +1 Fuerza. Héroe, agota a tu héroe: descártalas.", villainBonus: { fuerza: 1 } },
+  { id: "puente-roto", name: "Derribar el Puente", type: "plan", boost: 0, glyph: "🌉", text: "Plan secundario (4 amenaza).", sidePlan: { amenaza: 4 } },
+  // Experto
+  { id: "furia-desatada", name: "Furia Desatada", type: "traicion", boost: 2, glyph: "💢", text: "El villano se activa contra ti. Oleada: revela otra carta.", reveal: [{ do: "villainActivates" }, { do: "surge" }] },
+  { id: "golpe-maestro", name: "Golpe Maestro", type: "traicion", boost: 2, glyph: "☠", text: "En forma de héroe recibes 2 daño; si no, añade 2 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 2, ifIdentity: { do: "addThreat", amount: 2 } }] },
   // Estándar
   { id: "avance-oscuro", name: "Avance Oscuro", type: "traicion", boost: 2, glyph: "⇥", text: "Añade 2 amenaza al plan principal.", reveal: [{ do: "addThreat", target: "mainPlan", amount: 2 }] },
   { id: "emboscada", name: "Emboscada", type: "traicion", boost: 1, glyph: "⚔", text: "En forma de héroe recibes 1 daño; si no, añade 1 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 1, ifIdentity: { do: "addThreat", amount: 1 } }] },
@@ -185,6 +224,8 @@ export const ENCOUNTER_SETS: Record<string, string[]> = {
   "bruja-mareas": ["triton-corrupto", "triton-corrupto", "triton-corrupto", "kraken-joven", "ola-gelida", "ola-gelida", "canto-sirena", "canto-sirena", "puerto-inundado", "tridente-abisal"],
   "senor-asedio": ["automata-asedio", "automata-asedio", "saboteador", "saboteador", "bombardeo", "bombardeo", "refuerzos", "ariete", "armadura-asedio"],
   "culto-luna": ["cultista-lunar", "cultista-lunar", "ritual-oscuro", "altar-lunar"],
+  coloso: ["maton-acorazado", "maton-acorazado", "bandido-saqueador", "bandido-saqueador", "carga-imparable", "carga-imparable", "pisoton", "pisoton", "placas-bronce", "puente-roto"],
+  experto: ["furia-desatada", "golpe-maestro"],
   estandar: ["avance-oscuro", "emboscada"],
 };
 
@@ -235,6 +276,22 @@ export const SCENARIOS: ScenarioDef[] = [
     encounterSets: ["senor-asedio", "legion-sombras", "estandar"],
   },
 ];
+
+SCENARIOS.unshift({
+  id: "estampida",
+  name: "La Estampida",
+  intro: "Kragor, el Coloso Embestidor, arrasa los caminos de Aurelia al frente de una banda de saqueadores. Golpea fuerte, pero piensa poco: el escenario ideal para empezar.",
+  villain: {
+    name: "Kragor, el Coloso Embestidor",
+    glyph: "🐗",
+    stages: [
+      { name: "Kragor I", vidaPorJugador: 13, fuerza: 2, plan: 1 },
+      { name: "Kragor II", vidaPorJugador: 15, fuerza: 3, plan: 1, text: "Cada golpe suyo hace temblar el suelo." },
+    ],
+  },
+  mainPlan: { name: "La Estampida", inicioPorJugador: 0, aceleracionPorJugador: 1, limitePorJugador: 15, text: "Si llega al límite, la estampida arrasa la ciudad: derrota." },
+  encounterSets: ["coloso", "legion-sombras", "estandar"],
+});
 
 export const PLAYER_CARDS = new Map(cards.map((c) => [c.id, c]));
 export const ENCOUNTER_CARDS = new Map(encounters.map((c) => [c.id, c]));

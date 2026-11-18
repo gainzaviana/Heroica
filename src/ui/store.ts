@@ -21,8 +21,8 @@ class Store {
     for (const fn of this.listeners) fn();
   }
 
-  start(scenario: string, heroes: string[]) {
-    this.state = newGame(scenario, heroes);
+  start(scenario: string, heroes: string[], difficulty: "normal" | "experto" = "normal") {
+    this.state = newGame(scenario, heroes, undefined, difficulty);
     this.history = [];
     this.changed();
   }

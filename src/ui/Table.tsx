@@ -373,6 +373,7 @@ export function Rules() {
       <p><b>Al terminar el turno</b> descartas lo que quieras, robas hasta tu tamaño de mano y se prepara todo.</p>
       <p><b>Fase del villano:</b> el plan principal avanza; el villano y tus esbirros <b>atacan</b> si estás en forma de héroe (puedes defenderte con el héroe o bloquear con un aliado) o <b>traman</b> si eres identidad (añaden amenaza). La carta de refuerzo ✹ suma a su ataque o plan. Después cada jugador recibe una carta de encuentro: esbirros, traiciones, planes secundarios o vínculos.</p>
       <p><b>Guardia:</b> mientras un esbirro con Guardia esté contigo, no puedes atacar al villano. <b>Aceleración:</b> el plan principal avanza más cada ronda.</p>
+      <p><b>Experto:</b> el villano gana +1 Fuerza y +2 vida por jugador en cada fase, y el mazo de encuentros incluye cartas más duras.</p>
       <p><b>A dos manos:</b> controlas dos héroes; juegan por turnos y el primer jugador cambia cada ronda.</p>
     </div>
   );

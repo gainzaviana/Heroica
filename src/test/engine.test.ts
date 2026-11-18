@@ -36,7 +36,7 @@ function botTurn(s: GameState): void {
 }
 
 function play(heroes: string[], seed: number, scenario = "eclipse-ceniza") {
-  const s = newGame(scenario, heroes, seed);
+  const s = newGame(scenario, heroes, seed, seed % 3 === 0 ? "experto" : "normal");
   const total = Object.keys(s.cards).length;
   let turns = 0;
   while (!s.result && turns++ < 400) botTurn(s);
@@ -57,14 +57,17 @@ describe("Heroica engine", () => {
     expect(mainPlan(s).threat).toBe(0);
     expect(s.encounterDeck.length).toBeGreaterThan(10);
     expect(villainStats(s).vidaMax).toBe(10);
+    const x = newGame("eclipse-ceniza", ["celeste"], 1, "experto");
+    expect(villainStats(x).vidaMax).toBe(12);
+    expect(x.encounterDeck.length).toBe(s.encounterDeck.length + 2);
   });
 
   it("plays complete solo and two-handed games to an end without losing cards", () => {
     const results: string[] = [];
     let rounds = 0;
-    for (let seed = 1; seed <= 16; seed++) {
+    for (let seed = 1; seed <= 12; seed++) {
       for (const scenario of SCENARIOS.map((x) => x.id))
-      for (const heroes of [["brasa"], ["vigia"], ["guardian"], ["sombra"], ["brasa", "vigia"], ["guardian", "sombra"]]) {
+      for (const heroes of [["brasa"], ["vigia"], ["guardian"], ["sombra"], ["celeste"], ["brasa", "vigia"], ["guardian", "sombra"], ["celeste", "brasa"]]) {
         const { s, total } = play(heroes, seed, scenario);
         expect(s.result, `seed ${seed} ${scenario} ${heroes}`).toBeDefined();
         expect(cardsAccounted(s), `seed ${seed} ${scenario} ${heroes}: cartas`).toBe(total);

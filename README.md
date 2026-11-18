@@ -21,10 +21,14 @@ guarda en el propio dispositivo después de cada acción.
 
 - **Héroes** (mazos de 30): **Brasa Rúnica** (Kaela Voss, herrera de runas), **Vigía del Alba** (Elian Morrow,
   cartógrafo), **Guardián de Piedra** (Bruna Halder, cantera; muy resistente) y **Sombra Errante** (Liss Corvel,
-  ladrona; rápida y con mucho robo).
-- **Escenarios:** *El Eclipse de Ceniza* contra **Morvath, el Rey Ceniza**; *La Marea Negra* contra **Vesperia, la
+  ladrona; rápida y con mucho robo) y **Armadura Celeste** (Teodor Valcourt, inventor; cada pieza de armadura amplía su
+  mano y potencia sus ataques).
+- **Escenarios:** *La Estampida* contra **Kragor, el Coloso Embestidor** (el más sencillo: golpea fuerte, trama poco);
+  *El Eclipse de Ceniza* contra **Morvath, el Rey Ceniza**; *La Marea Negra* contra **Vesperia, la
   Bruja de las Mareas**; *El Asedio de Hierro* contra **Gorvak, el Señor del Asedio**. Cada uno con su conjunto de
   encuentros, un conjunto modular (*Legión de Sombras* o *Culto de la Luna Rota*) y el *Estándar*.
+- **Dificultad:** Normal o Experto (el villano tiene +1 Fuerza y +2 vida por jugador en cada fase, y se añade el
+  conjunto *Experto*).
 - **Arte:** cada carta, héroe y villano tiene su ilustración 3D (toon) en `src/assets/art/*.webp`.
 
 ## Arte de las cartas

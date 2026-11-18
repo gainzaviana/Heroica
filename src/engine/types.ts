@@ -17,7 +17,7 @@ export type Target =
   | "eachHero";
 
 export type Effect =
-  | { do: "damage"; target: Target; amount: number; ifUpgrade?: number; stun?: boolean }
+  | { do: "damage"; target: Target; amount: number; ifUpgrade?: number; stun?: boolean; plusTrait?: string }
   | { do: "thwart"; target: Target; amount: number }
   | { do: "addThreat"; target: Target; amount: number }
   | { do: "heal"; target: Target; amount: number }
@@ -57,7 +57,9 @@ export interface PlayerCardDef {
   /** Allies: health, attack, thwart and the damage they take for acting. */
   ally?: { vida: number; fuerza: number; ingenio: number; consFuerza: number; consIngenio: number };
   /** Upgrades: stat bonus to the hero. */
-  bonus?: Stats & { vidaMax?: number };
+  bonus?: Stats & { vidaMax?: number; mano?: number };
+  /** Traits other cards can count (e.g. "pieza" for armour pieces). */
+  traits?: string[];
   /** Events: what they do when played, and when they can be played. */
   play?: { timing: Timing; effects: Effect[]; heroOnly?: boolean };
   /** Supports/upgrades with an ability. */
@@ -165,6 +167,8 @@ export interface GameState {
   seed: number;
   rngState: number;
   scenario: string;
+  /** Experto: tougher villain (+1 Fuerza, +2 vida por jugador en cada fase) and the expert encounter set. */
+  difficulty: "normal" | "experto";
   /** Every card instance in the game: uid → definition id. */
   cards: Record<string, string>;
   players: PlayerState[];

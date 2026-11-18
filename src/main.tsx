@@ -10,6 +10,7 @@ function Start() {
   const [heroes, setHeroes] = useState<string[]>([HEROES[0].id]);
   const [scenario, setScenario] = useState(SCENARIOS[0].id);
   const [rules, setRules] = useState(false);
+  const [difficulty, setDifficulty] = useState<"normal" | "experto">("normal");
   const toggle = (id: string) => setHeroes(heroes.includes(id) ? heroes.filter((h) => h !== id) : heroes.length >= 2 ? [heroes[1], id] : [...heroes, id]);
   const sc = SCENARIOS.find((x) => x.id === scenario)!;
   return (
@@ -49,8 +50,17 @@ function Start() {
           ))}
         </div>
         <p class="muted">{sc.intro}</p>
+        <div class="kicker">Dificultad</div>
+        <div class="tabs" role="radiogroup">
+          {(["normal", "experto"] as const).map((d) => (
+            <button key={d} role="radio" aria-checked={difficulty === d} class={difficulty === d ? "on" : ""} style={{ ["--hero" as string]: d === "experto" ? "#c9452f" : "#4f9d4a" }} onClick={() => setDifficulty(d)}>
+              {d === "normal" ? "Normal" : "Experto"}
+            </button>
+          ))}
+        </div>
+        <p class="muted small">{difficulty === "normal" ? "La experiencia estándar." : "El villano tiene +1 Fuerza y +2 vida por jugador en cada fase, y se añade el conjunto Experto (Furia Desatada, Golpe Maestro)."}</p>
       </section>
-      <button class="act gold wide big" disabled={!heroes.length} onClick={() => store.start(scenario, heroes)}>
+      <button class="act gold wide big" disabled={!heroes.length} onClick={() => store.start(scenario, heroes, difficulty)}>
         {heroes.length === 2 ? "Empezar a dos manos" : "Empezar en solitario"}
       </button>
       <button class="act ghost wide" onClick={() => setRules(true)}>Cómo se juega</button>

@@ -55,14 +55,22 @@ export function heroStats(s: GameState, i: number) {
   return st;
 }
 
-export const handSize = (s: GameState, i: number) => { const p = s.players[i], h = heroOf(p); return p.form === "heroe" ? h.hero.mano : h.identity.mano; };
+export function handSize(s: GameState, i: number): number {
+  const p = s.players[i], h = heroOf(p);
+  const base = p.form === "heroe" ? h.hero.mano : h.identity.mano;
+  return base + p.play.reduce((a, c) => a + (pcard(s, c.uid).bonus?.mano ?? 0), 0);
+}
+
+/** How many of this player's cards in play have a trait (armour pieces, …). */
+export const traitCount = (s: GameState, i: number, trait: string) => s.players[i].play.filter((c) => pcard(s, c.uid).traits?.includes(trait)).length;
 
 export function villainStats(s: GameState) {
   const sc = scenarioOf(s);
   const st = sc.villain.stages[s.villain.stage];
   let fuerza = st.fuerza, plan = st.plan;
   for (const a of s.villain.attachments) { const b = ecard(s, a).villainBonus; fuerza += b?.fuerza ?? 0; plan += b?.plan ?? 0; }
-  return { name: st.name, fuerza, plan, vidaMax: st.vidaPorJugador * playerCount(s), text: st.text };
+  const expert = s.difficulty === "experto";
+  return { name: st.name, fuerza: fuerza + (expert ? 1 : 0), plan, vidaMax: (st.vidaPorJugador + (expert ? 2 : 0)) * playerCount(s), text: st.text };
 }
 
 export const mainPlan = (s: GameState) => s.plans.find((p) => p.def === "main")!;
@@ -70,11 +78,11 @@ export const planLimit = (s: GameState) => scenarioOf(s).mainPlan.limitePorJugad
 
 // MARK: Setup
 
-export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now() >>> 0): GameState {
+export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now() >>> 0, difficulty: "normal" | "experto" = "normal"): GameState {
   const sc = SCENARIO_BY_ID.get(scenarioID);
   if (!sc) throw new Error(`Escenario desconocido: ${scenarioID}`);
   const s: GameState = {
-    version: 1, seed, rngState: seed, scenario: sc.id, cards: {}, players: [], active: 0, first: 0, round: 1, phase: "jugadores",
+    version: 1, seed, rngState: seed, scenario: sc.id, difficulty, cards: {}, players: [], active: 0, first: 0, round: 1, phase: "jugadores",
     villain: { stage: 0, damage: 0, stunned: false, attachments: [] }, plans: [], encounterDeck: [], encounterDiscard: [],
     villainQueue: [], prompt: null, log: [], nextUid: 1,
   };
@@ -88,7 +96,8 @@ export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now()
   }
   s.players.forEach((_, i) => drawCards(s, i, handSize(s, i)));
   s.plans.push({ uid: "main", def: "main", threat: sc.mainPlan.inicioPorJugador * s.players.length });
-  s.encounterDeck = shuffle(s, sc.encounterSets.flatMap((set) => ENCOUNTER_SETS[set]).map(mk));
+  const sets = difficulty === "experto" ? [...sc.encounterSets, "experto"] : sc.encounterSets;
+  s.encounterDeck = shuffle(s, sets.flatMap((set) => ENCOUNTER_SETS[set]).map(mk));
   log(s, `${sc.villain.name} amenaza Aurelia. ${s.players.map((_, i) => heroOf(s.players[i]).hero.name).join(" y ")} acuden a la llamada.`);
   return s;
 }
@@ -273,7 +282,7 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
   switch (e.do) {
     case "damage": {
       const upgraded = p.play.some((c) => pcard(s, c.uid).type === "mejora");
-      const amount = upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount;
+      const amount = (upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount) + (e.plusTrait ? traitCount(s, i, e.plusTrait) : 0);
       if (e.target === "allMinions") {
         for (const q of s.players) for (const m of [...q.engaged]) damageEnemy(s, m.uid, amount);
         break;
