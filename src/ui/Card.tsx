@@ -1,12 +1,30 @@
 import type { ComponentChildren } from "preact";
-import type { EncounterCardDef, PlayerCardDef } from "../engine/types";
+import type { EncounterCardDef, PlayerCardDef, ResType, StatusKind, Statuses } from "../engine/types";
+import { RES_ICON, RES_NAME, STATUS_NAME } from "../engine/game";
 import { artUrl } from "./art";
 
 const TYPE_NAME: Record<string, string> = {
   aliado: "Aliado", mejora: "Mejora", apoyo: "Apoyo", evento: "Evento", recurso: "Recurso",
   esbirro: "Esbirro", traicion: "Traición", plan: "Plan secundario", vinculo: "Vínculo", obligacion: "Obligación",
 };
-const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza" };
+const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo" };
+const STATUS_ICON: Record<StatusKind, string> = { stunned: "💫", confused: "🌀", tough: "🛡️" };
+
+/** A card's printed resources: one icon per resource, coloured by type. */
+export function ResIcons({ type, n }: { type: ResType; n: number }) {
+  return (
+    <span class="card-res" role="img" aria-label={`Vale ${n} ${RES_NAME[type]}`} title={`Vale ${n} ${RES_NAME[type]}`}>
+      {Array.from({ length: n }, (_, k) => <i key={k} class={`res res-${type}`} aria-hidden="true">{RES_ICON[type]}</i>)}
+    </span>
+  );
+}
+
+/** Status cards on a character (Aturdido, Confundido, Duro). */
+export function StatusChips({ st }: { st?: Statuses }) {
+  const on = (["stunned", "confused", "tough"] as StatusKind[]).filter((k) => st?.[k]);
+  if (!on.length) return null;
+  return <span class="status-chips">{on.map((k) => <span key={k} class={`chip st-${k}`}>{STATUS_ICON[k]} {STATUS_NAME[k]}</span>)}</span>;
+}
 
 /** The art window: the card's picture, or its symbol while there's none. */
 export function Art({ artKey, glyph, label }: { artKey: string; glyph: string; label?: string }) {
@@ -22,13 +40,13 @@ export function Art({ artKey, glyph, label }: { artKey: string; glyph: string; l
  * A card: name bar with its cost gem, art window, type band, rules text (on bigger sizes) and a
  * footer with its stats and the resources it gives when discarded to pay.
  */
-export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage, onClick, badge }: {
-  def: PlayerCardDef; size?: "sm" | "md" | "lg"; selected?: boolean; dim?: boolean; exhausted?: boolean; damage?: number; onClick?: () => void; badge?: ComponentChildren;
+export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage, onClick, badge, status }: {
+  def: PlayerCardDef; size?: "sm" | "md" | "lg"; selected?: boolean; dim?: boolean; exhausted?: boolean; damage?: number; onClick?: () => void; badge?: ComponentChildren; status?: Statuses;
 }) {
   // Only cards you can tap are buttons; display-only cards are a labelled group.
   const Tag = onClick ? "button" : "div";
   return (
-    <Tag type={onClick ? "button" : undefined} role={onClick ? undefined : "group"} class={`card card-${size} t-${def.type}${selected ? " selected" : ""}${dim ? " dim" : ""}${exhausted ? " exhausted" : ""}`} onClick={onClick} aria-label={`${def.name}. ${TYPE_NAME[def.type]}. Coste ${def.cost}. ${def.text}`}>
+    <Tag type={onClick ? "button" : undefined} role={onClick ? undefined : "group"} class={`card card-${size} t-${def.type}${selected ? " selected" : ""}${dim ? " dim" : ""}${exhausted ? " exhausted" : ""}`} onClick={onClick} aria-label={`${def.name}. ${TYPE_NAME[def.type]}. Coste ${def.cost}. Vale ${def.resources} ${RES_NAME[def.resType]}. ${def.text}`}>
       <span class="card-head">
         <span class="card-name">{def.name}</span>
         {def.type !== "recurso" && <span class="card-cost">{def.cost}</span>}
@@ -44,14 +62,15 @@ export function PlayerCard({ def, size = "md", selected, dim, exhausted, damage,
             <span class="stat hp" title="Vida">{def.ally.vida - (damage ?? 0)}</span>
           </span>
         ) : <span />}
-        <span class="card-res" title={`Vale ${def.resources} al pagar`}>{Array.from({ length: def.resources }, (_, k) => <i key={k} />)}</span>
+        <ResIcons type={def.resType} n={def.resources} />
       </span>
+      <StatusChips st={status} />
       {badge}
     </Tag>
   );
 }
 
-export function EncounterCard({ def, size = "md", damage, stunned, onClick }: { def: EncounterCardDef; size?: "sm" | "md" | "lg"; damage?: number; stunned?: boolean; onClick?: () => void }) {
+export function EncounterCard({ def, size = "md", damage, status, onClick }: { def: EncounterCardDef; size?: "sm" | "md" | "lg"; damage?: number; status?: Statuses; onClick?: () => void }) {
   const Tag = onClick ? "button" : "div";
   return (
     <Tag type={onClick ? "button" : undefined} role={onClick ? undefined : "group"} class={`card card-${size} enc t-${def.type}`} onClick={onClick} aria-label={`${def.name}. ${TYPE_NAME[def.type]}. ${def.text}`}>
@@ -69,7 +88,7 @@ export function EncounterCard({ def, size = "md", damage, stunned, onClick }: { 
         ) : def.sidePlan ? <span class="card-stats"><span class="stat sch" title="Amenaza">{def.sidePlan.amenaza}</span></span> : <span />}
         <span class="card-boost" title={`Refuerzo ${def.boost}`}>{Array.from({ length: def.boost }, (_, k) => <i key={k} />)}</span>
       </span>
-      {stunned && <span class="chip stun">Aturdido</span>}
+      <StatusChips st={status} />
     </Tag>
   );
 }

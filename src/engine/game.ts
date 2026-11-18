@@ -1,5 +1,11 @@
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HERO_BY_ID, PLAYER_CARDS, SCENARIO_BY_ID } from "../data/content";
-import type { CardInPlay, Effect, EffectCtx, GameState, PlanState, PlayerState, Prompt, Resume, Target, VillainStep } from "./types";
+import type { CardInPlay, Effect, EffectCtx, GameState, PlanState, PlayerState, Prompt, ResType, Resume, StatusKind, Statuses, Target, VillainStep } from "./types";
+
+export const RES_ICON: Record<ResType, string> = { energia: "⚡", mental: "🧠", fisico: "✊", comodin: "🌟" };
+export const RES_NAME: Record<ResType, string> = { energia: "Energía", mental: "Mental", fisico: "Físico", comodin: "Comodín" };
+export const STATUS_NAME: Record<StatusKind, string> = { stunned: "Aturdido", confused: "Confundido", tough: "Duro" };
+/** A printed type satisfies a wanted type if it matches or is Comodín. */
+export const resMatches = (printed: ResType, wanted: ResType) => printed === wanted || printed === "comodin";
 
 /**
  * The rules engine. Every function takes the state and changes it in place; the interface keeps
@@ -185,43 +191,79 @@ const refFromID = (s: GameState, id: string): EnemyRef | undefined => {
 };
 export const enemyName = (s: GameState, id: string) => (id === "villain" ? villainStats(s).name : ecard(s, id).name);
 
-function damageEnemy(s: GameState, id: string, amount: number) {
-  if (amount <= 0) return;
+/** Damages an enemy. Returns whether it was defeated and the damage left over beyond what defeated it. */
+function damageEnemy(s: GameState, id: string, amount: number): { defeated: boolean; excess: number } {
+  const none = { defeated: false, excess: 0 };
+  if (amount <= 0) return none;
   if (id === "villain") {
     if (s.villain.tough) {
       s.villain.tough = false;
       log(s, `${villainStats(s).name} es Duro: el golpe no le hace daño (pierde Duro).`);
-      return;
+      return none;
     }
     s.villain.damage += amount;
     const v = villainStats(s);
     log(s, `${v.name} recibe ${amount} daño (${Math.max(0, v.vidaMax - s.villain.damage)} vida restante).`);
     if (s.villain.damage >= v.vidaMax) {
       const sc = scenarioOf(s);
+      countDefeat(s);
       if (s.villain.stage + 1 < stageList(s).length) {
-        s.villain.stage += 1; s.villain.damage = 0; s.villain.stunned = false;
+        s.villain.stage += 1; s.villain.damage = 0; s.villain.stunned = false; s.villain.confused = false;
         log(s, `¡${v.name} cae, pero se alza de nuevo como ${villainStats(s).name}!`);
         revealStage(s);
       } else finish(s, "victoria", `${sc.villain.name} ha sido derrotado. Aurelia vuelve a ver el sol.`);
+      return { defeated: true, excess: 0 };
     }
-    return;
+    return none;
   }
   const ref = refFromID(s, id);
-  if (!ref) return;
+  if (!ref) return none;
   const p = s.players[ref.player!];
   const m = p.engaged.find((x) => x.uid === id)!;
   const def = ecard(s, id);
+  if (m.tough) { m.tough = false; log(s, `${def.name} es Duro: el golpe no le hace daño (pierde Duro).`); return none; }
+  const left = def.minion!.vida - m.damage;
   m.damage += amount;
   if (m.damage >= def.minion!.vida) {
     p.engaged = p.engaged.filter((x) => x.uid !== id);
     s.encounterDiscard.push(id);
     log(s, `${def.name} es derrotado.`);
-  } else log(s, `${def.name} recibe ${amount} daño.`);
+    countDefeat(s);
+    return { defeated: true, excess: amount - left };
+  }
+  log(s, `${def.name} recibe ${amount} daño.`);
+  return none;
+}
+
+function countDefeat(s: GameState) {
+  if (s.phase === "jugadores") { const p = s.players[s.active]; p.defeatedThisTurn = (p.defeatedThisTurn ?? 0) + 1; }
+}
+
+/** The status holder behind a target id: villain, a minion, "hero:i" or an ally in play. */
+function statusHolder(s: GameState, id: string): { st: Statuses; name: string } | undefined {
+  if (id === "villain") return { st: s.villain, name: villainStats(s).name };
+  if (id.startsWith("hero:")) { const i = Number(id.slice(5)); return { st: s.players[i], name: heroName(s, i) }; }
+  for (const p of s.players) {
+    const m = p.engaged.find((x) => x.uid === id);
+    if (m) return { st: m, name: ecard(s, id).name };
+    const c = p.play.find((x) => x.uid === id);
+    if (c) return { st: c, name: pcard(s, id).name };
+  }
+  return undefined;
+}
+
+export function giveStatus(s: GameState, id: string, kind: StatusKind) {
+  const h = statusHolder(s, id);
+  if (!h) return;
+  if (h.st[kind]) { log(s, `${h.name} ya está ${STATUS_NAME[kind]}.`); return; }
+  h.st[kind] = true;
+  log(s, `${h.name} queda ${STATUS_NAME[kind]}.`);
 }
 
 function damageHero(s: GameState, i: number, amount: number) {
   if (amount <= 0) return;
   const p = s.players[i];
+  if (p.tough) { p.tough = false; log(s, `${heroName(s, i)} es Duro: no recibe daño (pierde Duro).`); return; }
   p.damage += amount;
   const max = heroStats(s, i).vidaMax;
   log(s, `${heroName(s, i)} recibe ${amount} daño (${Math.max(0, max - p.damage)} vida).`);
@@ -237,8 +279,9 @@ function damageAlly(s: GameState, i: number, uid: string, amount: number) {
   const p = s.players[i];
   const c = p.play.find((x) => x.uid === uid);
   if (!c || amount <= 0) return;
-  c.damage += amount;
   const def = pcard(s, uid);
+  if (c.tough) { c.tough = false; log(s, `${def.name} es Duro: no recibe daño (pierde Duro).`); return; }
+  c.damage += amount;
   if (c.damage >= def.ally!.vida) {
     p.play = p.play.filter((x) => x.uid !== uid);
     p.discard.push(uid);
@@ -278,6 +321,9 @@ function optionsFor(s: GameState, i: number, t: Target, ctx?: EffectCtx): { id: 
     case "choosePlan": return s.plans.map((p) => ({ id: p.uid, label: planName(s, p), detail: `${p.threat} amenaza` }));
     case "mainPlan": return [{ id: "main", label: planName(s, mainPlan(s)) }];
     case "self": return [{ id: `hero:${i}`, label: heroName(s, i) }];
+    case "lastTarget": return ctx?.lastTarget && (ctx.lastTarget === "villain" || refFromID(s, ctx.lastTarget)) ? [{ id: ctx.lastTarget, label: enemyName(s, ctx.lastTarget) }] : [];
+    case "chooseOtherEnemy": return enemiesFor(s, i, true).filter((r) => refID(r) !== ctx?.lastTarget).map((r) => ({ id: refID(r), label: enemyName(s, refID(r)), detail: enemyDetail(s, refID(r)) }));
+    case "thisCard": return ctx?.source && s.players[i].play.some((c) => c.uid === ctx.source) ? [{ id: ctx.source, label: pcard(s, ctx.source).name }] : [];
     case "chooseFriendly": {
       const out = [{ id: `hero:${i}`, label: heroName(s, i) }];
       for (const c of s.players[i].play) if (pcard(s, c.uid).ally) out.push({ id: c.uid, label: pcard(s, c.uid).name });
@@ -301,12 +347,7 @@ function runEffects(s: GameState, i: number, effects: Effect[], index = 0, ctx: 
     const e = effects[k];
     if (e.do === "lookTop") {
       const p = s.players[i];
-      if (p.deck.length < e.amount && p.discard.length) {
-        p.deck.push(...shuffle(s, p.discard.splice(0)));
-        log(s, `${heroOf(p).hero.name} baraja su descarte: el villano aprovecha el respiro (+1 amenaza).`);
-        mainPlan(s).threat += 1;
-        if (checkEnd(s)) return true;
-      }
+      if (refillDeck(s, i, e.amount)) return true;
       const top = p.deck.slice(0, e.amount);
       if (!top.length) continue;
       setPrompt(s, {
@@ -320,7 +361,8 @@ function runEffects(s: GameState, i: number, effects: Effect[], index = 0, ctx: 
       setPrompt(s, { player: i, kind: "target", text: e.text, options: e.options.map((o, n) => ({ id: String(n), label: o.label })), resume: { r: "effects", player: i, effects, index: k, source, ctx } });
       return false;
     }
-    const needsTarget = "target" in e && e.target && !["eachHero", "allMinions"].includes(e.target);
+    const thwartAll = e.do === "thwart" && !!e.allIfTrait && traitCount(s, i, e.allIfTrait) > 0;
+    const needsTarget = "target" in e && e.target && !["eachHero", "allMinions", "allCharacters"].includes(e.target) && !thwartAll;
     let chosen: string | undefined;
     if (needsTarget) {
       const opts = optionsFor(s, i, (e as { target: Target }).target, ctx);
@@ -336,23 +378,45 @@ function runEffects(s: GameState, i: number, effects: Effect[], index = 0, ctx: 
   return true;
 }
 
-const targetText = (e: Effect) => (e.do === "damage" ? "¿A qué enemigo?" : e.do === "thwart" ? "¿De qué plan retiras amenaza?" : e.do === "heal" ? "¿A quién curas?" : "Elige un objetivo");
+const targetText = (e: Effect) => (e.do === "damage" ? (e.target === "chooseOtherEnemy" ? "¿A qué otro enemigo?" : "¿A qué enemigo?") : e.do === "status" ? "¿A quién?" : e.do === "thwart" ? "¿De qué plan retiras amenaza?" : e.do === "heal" ? "¿A quién curas?" : "Elige un objetivo");
 
 function applyEffect(s: GameState, i: number, e: Effect, target: string | undefined, ctx: EffectCtx) {
   const p = s.players[i];
   switch (e.do) {
     case "damage": {
       const upgraded = p.play.some((c) => pcard(s, c.uid).type === "mejora");
-      const amount = (upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount) + (e.plusTrait ? traitCount(s, i, e.plusTrait) : 0);
+      const amount = (upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount)
+        + (e.plusTrait ? traitCount(s, i, e.plusTrait) : 0)
+        + (e.paidBonus && paidHas(ctx, e.paidBonus.res) ? e.paidBonus.amount : 0)
+        + (e.traitBonus && traitCount(s, i, e.traitBonus.trait) > 0 ? e.traitBonus.amount : 0);
       if (e.target === "allMinions") {
         for (const q of s.players) for (const m of [...q.engaged]) damageEnemy(s, m.uid, amount);
         break;
       }
-      if (e.stun && target) applyEffect(s, i, { do: "stun", target: e.target }, target, ctx);
-      damageEnemy(s, target!, amount);
+      if (e.target === "allCharacters") {
+        log(s, `¡${amount} daño a todos los personajes!`);
+        damageEnemy(s, "villain", amount);
+        for (const q of s.players) for (const m of [...q.engaged]) damageEnemy(s, m.uid, amount);
+        s.players.forEach((q, qi) => { if (!q.eliminated) damageHero(s, qi, amount); for (const c of [...q.play]) if (pcard(s, c.uid).ally) damageAlly(s, qi, c.uid, amount); });
+        break;
+      }
+      if (!target) break;
+      if (e.stun) giveStatus(s, target, "stunned");
+      ctx.lastTarget = target;
+      const r = damageEnemy(s, target, amount);
+      ctx.killed = r.defeated;
+      if (r.excess > 0 && e.overkillIfPaid && paidHas(ctx, e.overkillIfPaid) && target !== "villain" && !s.result) {
+        log(s, `Arrollador: ${r.excess} daño sobrante pasa al villano.`);
+        damageEnemy(s, "villain", r.excess);
+      }
       break;
     }
-    case "thwart": thwartPlan(s, target!, e.amount); break;
+    case "thwart": {
+      const amount = e.amount + (e.paidBonus && paidHas(ctx, e.paidBonus.res) ? e.paidBonus.amount : 0) + (e.bonusIfDefeated && (p.defeatedThisTurn ?? 0) > 0 ? e.bonusIfDefeated : 0);
+      if (e.allIfTrait && traitCount(s, i, e.allIfTrait) > 0) { for (const plan of [...s.plans]) thwartPlan(s, plan.uid, amount); break; }
+      thwartPlan(s, target!, amount);
+      break;
+    }
     case "addThreat": addThreat(s, target!, e.amount); break;
     case "heal": {
       if (target?.startsWith("hero:")) { const before = p.damage; p.damage = Math.max(0, p.damage - e.amount); log(s, `${heroName(s, i)} se cura ${before - p.damage}.`); }
@@ -361,10 +425,14 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
     }
     case "draw": drawCards(s, i, e.amount); break;
     case "prevent": if (ctx.preventPool) ctx.preventPool.amount += e.amount; break;
-    case "stun": {
-      if (target === "villain") s.villain.stunned = true;
-      else { const ref = target && refFromID(s, target); const m = ref && s.players[ref.player!].engaged.find((x) => x.uid === target); if (m) m.stunned = true; }
-      if (target) log(s, `${enemyName(s, target)} queda aturdido.`);
+    case "stun": if (target) giveStatus(s, target, "stunned"); break;
+    case "status": if (target) giveStatus(s, target, e.status); break;
+    case "mill": mill(s, i, e, ctx); break;
+    case "ifKilled": if (ctx.killed) runEffects(s, i, e.effects, 0, ctx); break;
+    case "selfDamage": if (ctx.source) damageAlly(s, i, ctx.source, e.amount); break;
+    case "discardSelf": {
+      const c = ctx.source && p.play.find((x) => x.uid === ctx.source);
+      if (c) { p.play = p.play.filter((x) => x !== c); p.discard.push(c.uid); log(s, `${pcard(s, c.uid).name} abandona el combate (descartado).`); }
       break;
     }
     case "readyHero": p.heroExhausted = false; log(s, `${heroName(s, i)} se prepara de nuevo.`); break;
@@ -428,6 +496,45 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
   checkEnd(s);
 }
 
+/** Puts the discard under the deck (shuffled) if the deck has fewer than n cards. Returns true if the game ended. */
+function refillDeck(s: GameState, i: number, n: number): boolean {
+  const p = s.players[i];
+  if (p.deck.length >= n || !p.discard.length) return false;
+  p.deck.push(...shuffle(s, p.discard.splice(0)));
+  log(s, `${heroOf(p).hero.name} baraja su descarte: el villano aprovecha el respiro (+1 amenaza).`);
+  mainPlan(s).threat += 1;
+  return checkEnd(s);
+}
+
+/** Discard the top cards and read their printed resources (see the "mill" effect). */
+function mill(s: GameState, i: number, e: Extract<Effect, { do: "mill" }>, ctx: EffectCtx) {
+  const p = s.players[i];
+  if (refillDeck(s, i, e.amount)) return;
+  const top = p.deck.splice(0, e.amount);
+  p.discard.push(...top);
+  const shown = top.map((u) => `${pcard(s, u).name} ${RES_ICON[pcard(s, u).resType].repeat(pcard(s, u).resources)}`);
+  log(s, `${ctx.sourceName ?? "Efecto"}: descarta ${shown.join(", ") || "nada"}.`);
+  const results: string[] = [];
+  if (e.damagePer) {
+    const n = top.reduce((a, u) => a + (resMatches(pcard(s, u).resType, e.damagePer!.res) ? pcard(s, u).resources : 0), 0);
+    const dmg = n * e.damagePer.amount;
+    results.push(n ? `${n} ${RES_ICON[e.damagePer.res]} → +${dmg} daño` : `Ningún ${RES_ICON[e.damagePer.res]}: sin daño extra`);
+    if (dmg) runEffects(s, i, [{ do: "damage", target: "lastTarget", amount: dmg }], 0, ctx);
+  }
+  if (e.branches && top.length) {
+    const t = pcard(s, top[0]).resType;
+    const kinds = (t === "comodin" ? ["fisico", "mental", "energia"] : [t]) as Exclude<ResType, "comodin">[];
+    const label: Record<string, string> = { fisico: "✊ +2 daño al objetivo", mental: "🧠 1 daño a todos los personajes", energia: "⚡ se descarta" };
+    for (const k of kinds) {
+      const branch = e.branches[k];
+      if (!branch || s.result) continue;
+      results.push(label[k] ?? RES_ICON[k]);
+      runEffects(s, i, branch, 0, ctx);
+    }
+  }
+  s.combo = { n: (s.combo?.n ?? 0) + 1, title: ctx.sourceName ?? "Combo", cards: top.map((u) => s.cards[u]), text: results.join(" · ") || "Sin efecto." };
+}
+
 function surge(s: GameState, i: number) {
   const next = takeEncounter(s);
   if (next) s.villainQueue.unshift({ s: "reveal", player: i, card: next });
@@ -465,6 +572,19 @@ function resume(s: GameState, r: Resume, option: string) {
     case "defense": return resolveDefense(s, r, option);
     case "interrupts": return resolveInterrupt(s, r, option);
     case "afterAttack": return resolveAfterAttack(s, r, option);
+    case "abilityPay": {
+      const p = s.players[r.player];
+      const def = pcard(s, r.card);
+      let paid: EffectCtx["paid"] = {};
+      if (option !== "no" && p.hand.includes(option)) {
+        p.hand = p.hand.filter((u) => u !== option);
+        p.discard.push(option);
+        paid = paidByType(s, [option]);
+        log(s, `Paga con ${pcard(s, option).name} (${RES_ICON[pcard(s, option).resType]}).`);
+      }
+      runEffects(s, r.player, def.ability!.effects, 0, { paid, source: r.card, sourceName: def.name });
+      return;
+    }
     case "villainStep": return;
   }
 }
@@ -511,6 +631,13 @@ export function canPlay(s: GameState, i: number, uid: string): string | undefine
 }
 
 export const resourcesOf = (s: GameState, uids: string[]) => uids.reduce((a, u) => a + pcard(s, u).resources, 0);
+/** Resources paid, by printed type. */
+export function paidByType(s: GameState, uids: string[]): Partial<Record<ResType, number>> {
+  const out: Partial<Record<ResType, number>> = {};
+  for (const u of uids) { const c = pcard(s, u); out[c.resType] = (out[c.resType] ?? 0) + c.resources; }
+  return out;
+}
+const paidHas = (ctx: EffectCtx, res: ResType) => (ctx.paid?.[res] ?? 0) > 0 || (ctx.paid?.comodin ?? 0) > 0;
 
 export function act(s: GameState, x: Action): string | undefined {
   if (s.result) return "La partida ha terminado.";
@@ -534,15 +661,18 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       const c = pcard(s, x.card);
       if (x.pay.includes(x.card) || x.pay.some((u) => !p.hand.includes(u))) return "Pago no válido.";
       if (resourcesOf(s, x.pay) < c.cost) return `Faltan recursos: necesitas ${c.cost}.`;
+      const paid = paidByType(s, x.pay);
       p.hand = p.hand.filter((u) => u !== x.card && !x.pay.includes(u));
       p.discard.push(...x.pay);
-      log(s, `${heroName(s, i)} juega ${c.name}.`);
+      const paidText = (Object.entries(paid) as [ResType, number][]).map(([k, n]) => RES_ICON[k].repeat(n)).join("");
+      log(s, `${heroName(s, i)} juega ${c.name}${paidText ? ` (paga ${paidText})` : ""}.`);
       if (c.play) {
-        if (runEffects(s, i, c.play.effects, 0, {}, `event:${x.card}`)) afterEffects(s, i, `event:${x.card}`);
+        if (runEffects(s, i, c.play.effects, 0, { paid, sourceName: c.name }, `event:${x.card}`)) afterEffects(s, i, `event:${x.card}`);
         return;
       }
       p.play.push({ uid: x.card, def: c.id, exhausted: false, damage: 0 });
-      if (c.type === "mejora") triggerAfterUpgrade(s, i);
+      if (c.onPlay) runEffects(s, i, c.onPlay, 0, { paid, source: x.card, sourceName: c.name });
+      if (c.type === "mejora" && !s.prompt) triggerAfterUpgrade(s, i);
       return;
     }
     case "attack": case "thwart": {
@@ -550,6 +680,8 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (p.heroExhausted) return `${heroLabel} está agotado.`;
       const st = heroStats(s, i);
       p.heroExhausted = true;
+      if (x.a === "attack" && p.stunned) { p.stunned = false; log(s, `${heroLabel} está Aturdido: su ataque se cancela (pierde Aturdido).`); return; }
+      if (x.a === "thwart" && p.confused) { p.confused = false; log(s, `${heroLabel} está Confundido: no contiene nada (pierde Confundido).`); return; }
       if (x.a === "attack") {
         log(s, `${heroLabel} ataca.`);
         runEffects(s, i, [{ do: "damage", target: "chooseEnemy", amount: st.fuerza }]);
@@ -575,10 +707,14 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (c.exhausted) return `${def.name} está agotado.`;
       c.exhausted = true;
       const attack = x.a === "allyAttack";
+      if (attack && c.stunned) { c.stunned = false; log(s, `${def.name} está Aturdido: su ataque se cancela (pierde Aturdido).`); return; }
+      if (!attack && c.confused) { c.confused = false; log(s, `${def.name} está Confundido: no contiene nada (pierde Confundido).`); return; }
       log(s, `${def.name} ${attack ? "ataca" : "contiene el plan"}.`);
-      const done = runEffects(s, i, [attack ? { do: "damage", target: "chooseEnemy", amount: def.ally.fuerza } : { do: "thwart", target: "choosePlan", amount: def.ally.ingenio }]);
-      void done;
-      damageAlly(s, i, c.uid, attack ? def.ally.consFuerza : def.ally.consIngenio);
+      const a = def.ally;
+      const effects: Effect[] = attack
+        ? [{ do: "damage", target: "chooseEnemy", amount: a.fuerza }, { do: "selfDamage", amount: a.consFuerza }, ...(a.onKill ? [{ do: "ifKilled" as const, effects: a.onKill }] : []), ...(a.onAttack ?? [])]
+        : [{ do: "thwart", target: "choosePlan", amount: a.ingenio }, { do: "selfDamage", amount: a.consIngenio }];
+      runEffects(s, i, effects, 0, { source: c.uid, sourceName: def.name });
       return;
     }
     case "useCard": {
@@ -588,9 +724,24 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (def.ability.heroOnly && p.form !== "heroe") return "Solo en forma de héroe.";
       if (def.ability.cost === "exhaust" && c.exhausted) return `${def.name} está agotada.`;
       if (def.ability.cost === "once" && c.usedThisRound) return "Ya la usaste esta ronda.";
+      const want = def.ability.payFor;
+      const payWith = want ? p.hand.filter((u) => resMatches(pcard(s, u).resType, want)) : [];
+      if (want && def.ability.payRequired && !payWith.length) return `Necesitas descartar una carta con ${RES_ICON[want]} ${RES_NAME[want]}.`;
       if (def.ability.cost === "exhaust") c.exhausted = true; else c.usedThisRound = true;
       log(s, `${heroName(s, i)} usa ${def.name}.`);
-      runEffects(s, i, def.ability.effects);
+      if (want && payWith.length) {
+        setPrompt(s, {
+          player: i, kind: "optional",
+          text: `${def.name}: ${def.ability.payRequired ? "descarta" : "¿descartas"} una carta con ${RES_ICON[want]} ${RES_NAME[want]} para pagar${def.ability.payRequired ? "." : "?"}`,
+          options: [
+            ...payWith.map((u) => ({ id: u, label: `${pcard(s, u).name} ${RES_ICON[pcard(s, u).resType].repeat(pcard(s, u).resources)}`, detail: pcard(s, u).text })),
+            ...(def.ability.payRequired ? [] : [{ id: "no", label: "No pagar" }]),
+          ],
+          resume: { r: "abilityPay", player: i, card: c.uid },
+        });
+        return;
+      }
+      runEffects(s, i, def.ability.effects, 0, { source: c.uid, sourceName: def.name });
       return;
     }
     case "heroAbility": {
@@ -636,7 +787,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       p.discard.push(...x.discard);
       const need = handSize(s, i) - p.hand.length;
       if (need > 0) drawCards(s, i, need);
-      p.heroExhausted = false; p.flippedThisTurn = false; p.stunned = false;
+      p.heroExhausted = false; p.flippedThisTurn = false; p.defeatedThisTurn = 0;
       for (const c of p.play) c.exhausted = false;
       log(s, `${heroName(s, i)} termina su turno.`);
       nextTurn(s);
@@ -711,7 +862,9 @@ function villainStep(s: GameState, st: VillainStep) {
     case "villainActivates": {
       const p = s.players[st.player];
       if (p.eliminated) return;
-      if (s.villain.stunned) { s.villain.stunned = false; log(s, `${villainStats(s).name} está aturdido y no actúa.`); return; }
+      const attacking = p.form === "heroe";
+      if (attacking && s.villain.stunned) { s.villain.stunned = false; log(s, `${villainStats(s).name} está Aturdido: su ataque se cancela (pierde Aturdido).`); return; }
+      if (!attacking && s.villain.confused) { s.villain.confused = false; log(s, `${villainStats(s).name} está Confundido: no trama (pierde Confundido).`); return; }
       const boostCard = takeEncounter(s);
       const boost = boostCard ? ecard(s, boostCard).boost : 0;
       if (boostCard) s.encounterDiscard.push(boostCard);
@@ -761,9 +914,14 @@ function activateMinion(s: GameState, i: number, uid: string) {
   const m = p.engaged.find((x) => x.uid === uid);
   if (!m || p.eliminated) return;
   const def = ecard(s, uid);
-  if (m.stunned) { m.stunned = false; log(s, `${def.name} está aturdido y no actúa.`); return; }
-  if (p.form === "heroe") attack(s, i, uid, def.minion!.fuerza, 0);
-  else if (def.minion!.plan > 0) { log(s, `${def.name} trama contra ${heroName(s, i)}.`); addThreat(s, "main", def.minion!.plan); }
+  if (p.form === "heroe") {
+    if (m.stunned) { m.stunned = false; log(s, `${def.name} está Aturdido: su ataque se cancela (pierde Aturdido).`); return; }
+    attack(s, i, uid, def.minion!.fuerza, 0);
+  } else if (def.minion!.plan > 0) {
+    if (m.confused) { m.confused = false; log(s, `${def.name} está Confundido: no trama (pierde Confundido).`); return; }
+    log(s, `${def.name} trama contra ${heroName(s, i)}.`);
+    addThreat(s, "main", def.minion!.plan);
+  }
 }
 
 function reveal(s: GameState, i: number, uid: string) {

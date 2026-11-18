@@ -14,11 +14,36 @@ export type Target =
   | "mainPlan"
   | "self" // this hero
   | "chooseFriendly" // a hero or an ally on your side
-  | "eachHero";
+  | "eachHero"
+  | "lastTarget" // the enemy the previous effect hit
+  | "chooseOtherEnemy" // an enemy other than lastTarget
+  | "allCharacters" // villain, every minion, every hero and every ally
+  | "thisCard"; // the card whose ability or ally action this is
+
+/** Printed resource types. Comodín counts as any type. */
+export type ResType = "energia" | "mental" | "fisico" | "comodin";
+/** Status cards: Aturdido cancels the next basic attack, Confundido the next basic thwart or scheme, Duro the next damage. */
+export type StatusKind = "stunned" | "confused" | "tough";
+export interface Statuses { stunned?: boolean; confused?: boolean; tough?: boolean }
 
 export type Effect =
-  | { do: "damage"; target: Target; amount: number; ifUpgrade?: number; stun?: boolean; plusTrait?: string }
-  | { do: "thwart"; target: Target; amount: number }
+  | {
+      do: "damage"; target: Target; amount: number; ifUpgrade?: number; stun?: boolean; plusTrait?: string;
+      /** +amount if the card was paid with this resource type. */
+      paidBonus?: { res: ResType; amount: number };
+      /** +amount if your hero has a card in play with this trait. */
+      traitBonus?: { trait: string; amount: number };
+      /** Paid with this type: damage beyond what kills a minion carries over to the villain. */
+      overkillIfPaid?: ResType;
+    }
+  | {
+      do: "thwart"; target: Target; amount: number;
+      paidBonus?: { res: ResType; amount: number };
+      /** With this trait in play: remove the threat from every plan instead of one. */
+      allIfTrait?: string;
+      /** +amount if you defeated an enemy this turn. */
+      bonusIfDefeated?: number;
+    }
   | { do: "addThreat"; target: Target; amount: number }
   | { do: "heal"; target: Target; amount: number }
   | { do: "draw"; amount: number }
@@ -34,7 +59,14 @@ export type Effect =
   | { do: "villainTough" } // the villain gains Duro; if it already has it, surge
   | { do: "nemesis" } // the revealing hero's nemesis set comes into play; if there is none, surge
   | { do: "armPlan"; plan: string; amount: number } // add threat to that side plan, or put it into play
-  | { do: "detonate"; plan: string }; // damage equal to that side plan's threat, then discard it; if absent, surge
+  | { do: "detonate"; plan: string } // damage equal to that side plan's threat, then discard it; if absent, surge
+  | { do: "status"; status: StatusKind; target: Target } // give a status card (never two of the same)
+  /** Discard the top cards of your deck and read their printed resources: damage per icon of a type
+   *  (to lastTarget), and/or (one card) the branch for its type — a Comodín runs every branch. */
+  | { do: "mill"; amount: number; damagePer?: { res: ResType; amount: number }; branches?: Partial<Record<Exclude<ResType, "comodin">, Effect[]>> }
+  | { do: "ifKilled"; effects: Effect[] } // only if the previous damage defeated an enemy
+  | { do: "selfDamage"; amount: number } // the acting ally takes damage (consequential damage)
+  | { do: "discardSelf" }; // the acting ally is discarded
 
 /** When a card's ability can be used. */
 export type Timing =
@@ -43,7 +75,13 @@ export type Timing =
   | "afterAttack" // response: after an enemy attacked you
   | "afterUpgrade"; // response: after you play an upgrade
 
-export interface Ability { timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string; heroOnly?: boolean }
+export interface Ability {
+  timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string; heroOnly?: boolean;
+  /** Using it asks you to discard a card with this resource (Comodín counts) to pay. */
+  payFor?: ResType;
+  /** Without such a card you can't use it. */
+  payRequired?: boolean;
+}
 
 // MARK: Cards
 
@@ -57,12 +95,21 @@ export interface PlayerCardDef {
   name: string;
   type: PlayerCardType;
   cost: number;
-  /** Resources it gives when discarded to pay (most 1, resource cards 2). */
+  /** Resources it gives when discarded to pay (most 1, resource cards 2), all of type `resType`. */
   resources: number;
+  resType: ResType;
+  /** When it enters play from your hand (allies, supports, upgrades). */
+  onPlay?: Effect[];
   text: string;
   flavor?: string;
   /** Allies: health, attack, thwart and the damage they take for acting. */
-  ally?: { vida: number; fuerza: number; ingenio: number; consFuerza: number; consIngenio: number };
+  ally?: {
+    vida: number; fuerza: number; ingenio: number; consFuerza: number; consIngenio: number;
+    /** After it attacks (forced). */
+    onAttack?: Effect[];
+    /** After its attack defeats an enemy. */
+    onKill?: Effect[];
+  };
   /** Upgrades: stat bonus to the hero. */
   bonus?: Stats & { vidaMax?: number; mano?: number };
   /** Traits other cards can count (e.g. "pieza" for armour pieces). */
@@ -141,7 +188,7 @@ export interface ScenarioDef {
 
 export type Zone = "deck" | "hand" | "discard" | "play" | "removed";
 
-export interface CardInPlay {
+export interface CardInPlay extends Statuses {
   uid: string;
   def: string;
   exhausted: boolean;
@@ -150,7 +197,7 @@ export interface CardInPlay {
   usedThisRound?: boolean;
 }
 
-export interface MinionState { uid: string; def: string; damage: number; stunned?: boolean }
+export interface MinionState extends Statuses { uid: string; def: string; damage: number }
 
 export interface PlanState { uid: string; def: string | "main"; threat: number }
 
@@ -161,7 +208,12 @@ export interface PlayerState {
   flippedThisTurn: boolean;
   heroAbilityUsed: boolean;
   damage: number;
+  /** Statuses of the hero/identity (one character). */
   stunned: boolean;
+  confused?: boolean;
+  tough?: boolean;
+  /** Enemies defeated during this player's current turn. */
+  defeatedThisTurn?: number;
   deck: string[]; // uids, top first
   hand: string[];
   discard: string[];
@@ -191,9 +243,21 @@ export type Resume =
   | { r: "defense"; player: number; attacker: string; amount: number; boost: number }
   | { r: "interrupts"; player: number; attacker: string; amount: number; defender: string | null; prevented: number }
   | { r: "afterAttack"; player: number; attacker: string }
+  | { r: "abilityPay"; player: number; card: string }
   | { r: "villainStep" };
 
-export interface EffectCtx { attacker?: string; preventPool?: { amount: number } }
+export interface EffectCtx {
+  attacker?: string;
+  preventPool?: { amount: number };
+  /** Resources paid for the card or ability, by type. */
+  paid?: Partial<Record<ResType, number>>;
+  /** The enemy the last damage effect hit; whether that defeated it. */
+  lastTarget?: string;
+  killed?: boolean;
+  /** The card acting (an ally or a card in play) and the name to show for combos. */
+  source?: string;
+  sourceName?: string;
+}
 
 export interface GameState {
   version: 1;
@@ -211,7 +275,7 @@ export interface GameState {
   round: number;
   phase: Phase;
   /** `stage` is a position in the stages used this game (see stagesFor). Duro: the next damage is cancelled. */
-  villain: { stage: number; damage: number; stunned: boolean; tough?: boolean; attachments: string[] };
+  villain: { stage: number; damage: number; stunned: boolean; confused?: boolean; tough?: boolean; attachments: string[] };
   plans: PlanState[];
   encounterDeck: string[];
   encounterDiscard: string[];
@@ -219,6 +283,8 @@ export interface GameState {
   villainQueue: VillainStep[];
   prompt: Prompt | null;
   log: { round: number; text: string }[];
+  /** The last card-combo that read discarded cards (for the on-screen summary). */
+  combo?: { n: number; title: string; cards: string[]; text: string };
   result?: "victoria" | "derrota";
   resultText?: string;
   nextUid: number;

@@ -194,3 +194,19 @@ button:disabled { opacity: 0.45; cursor: default; }
 .deck-info { flex: 1; min-width: 0; }
 .deck-info p { margin: 4px 0 0; line-height: 1.4; }
 .qty { flex: none; font-weight: 900; font-size: 16px; color: #fff; background: var(--text); border-radius: 999px; padding: 1px 9px; }
+
+/* Resource icons and statuses */
+.card-res i.res { width: 15px; height: 15px; transform: none; border-radius: 50%; display: grid; place-items: center; font-size: 9px; font-style: normal; line-height: 1; box-shadow: 0 0 0 1.5px #fffdf6, 0 1px 2px rgba(0, 0, 0, 0.3); background: none; }
+.res-energia { background: #f2c230 !important; } .res-mental { background: #3f7fd6 !important; } .res-fisico { background: #d2453a !important; } .res-comodin { background: #3fa55b !important; }
+.card-sm .card-res i.res { width: 13px; height: 13px; font-size: 8px; }
+.card-lg .card-res i.res { width: 22px; height: 22px; font-size: 13px; }
+.status-chips { display: flex; flex-wrap: wrap; gap: 3px; margin: 2px 0; }
+.card .status-chips { position: absolute; top: 30px; left: 6px; right: 6px; margin: 0; }
+.card .status-chips .chip { position: static; font-size: 9px; padding: 1px 5px; }
+.chip.st-stunned { background: #ece0ff; color: var(--purple); }
+.chip.st-confused { background: #dff0ff; color: #1f5f99; }
+.chip.st-tough { background: #e5e1d8; color: #4a3f33; }
+.paid-line { letter-spacing: 0; text-transform: none; }
+.combo { position: fixed; z-index: 40; left: 50%; transform: translateX(-50%); top: calc(60px + env(safe-area-inset-top)); width: min(560px, calc(100vw - 24px)); border-top: 5px solid var(--gold); animation: rise 0.25s; }
+.combo .cards { margin: 6px 0; }
+.res-row { gap: 6px; margin-top: 3px; } .res-row .card-res i.res { width: 18px; height: 18px; font-size: 11px; }

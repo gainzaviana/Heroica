@@ -270,3 +270,226 @@ describe("Vanguardia de Titanio vs. Mazagón (El Asalto al Arsenal)", () => {
     }
   });
 });
+
+describe("Recursos, estados y combos", () => {
+  const SC = "asalto-arsenal";
+  /** A fresh game with Vanguardia in hero form and an empty hand (cards go back to the deck). */
+  function setup(seed = 21) {
+    const s = newGame(SC, ["vanguardia"], seed);
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = "heroe";
+    return { s, p };
+  }
+  const copies = (s: GameState, def: string) => Object.keys(s.cards).filter((u) => s.cards[u] === def);
+  function take(s: GameState, def: string, nth = 0): string {
+    const u = copies(s, def)[nth];
+    const p = s.players[0];
+    p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
+    return u;
+  }
+  const toHand = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].hand.push(u); return u; };
+  const toPlay = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].play.push({ uid: u, def, exhausted: false, damage: 0 }); return u; };
+  const onTop = (s: GameState, defs: string[]) => { const us = defs.map((d) => take(s, d, copies(s, d).findIndex((u) => !s.players[0].play.some((c) => c.uid === u)))); s.players[0].deck.unshift(...us); return us; };
+  function engage(s: GameState, def: string) {
+    const u = copies(s, def)[0];
+    s.encounterDeck = s.encounterDeck.filter((x) => x !== u);
+    s.players[0].engaged.push({ uid: u, def, damage: 0 });
+    return u;
+  }
+  const settleFirst = (s: GameState) => { let g = 0; while (s.prompt && g++ < 20) answer(s, s.prompt.options[0].id); };
+
+  it("Aturdido cancels the next basic attack, Confundido the next thwart, Duro the next damage", () => {
+    const { s, p } = setup();
+    p.stunned = true;
+    act(s, { a: "attack", player: 0 });
+    expect(s.villain.damage).toBe(0);
+    expect(p.stunned).toBe(false);
+    expect(p.heroExhausted).toBe(true);
+
+    p.heroExhausted = false; p.confused = true; mainPlan(s).threat = 3;
+    act(s, { a: "thwart", player: 0 });
+    expect(mainPlan(s).threat).toBe(3);
+    expect(p.confused).toBe(false);
+
+    p.heroExhausted = false; s.villain.tough = true;
+    act(s, { a: "attack", player: 0 });
+    expect(s.villain.damage).toBe(0);
+    expect(s.villain.tough).toBe(false);
+    p.heroExhausted = false;
+    act(s, { a: "attack", player: 0 });
+    expect(s.villain.damage).toBe(1);
+  });
+
+  it("the villain: Aturdido cancels its attack, Confundido its scheme; a minion likewise", () => {
+    const { s } = setup();
+    s.villain.stunned = true;
+    act(s, { a: "endTurn", player: 0, discard: [] }); // hero form: the villain would attack
+    expect(s.villain.stunned).toBe(false);
+    expect(s.log.some((l) => l.text.includes("su ataque se cancela"))).toBe(true);
+    settleFirst(s);
+
+    const x = setup(22).s;
+    x.players[0].form = "identidad";
+    x.villain.confused = true;
+    engage(x, "maton-sueldo");
+    x.players[0].engaged[0].confused = true;
+    act(x, { a: "endTurn", player: 0, discard: [] });
+    settleFirst(x);
+    // Neither the villain nor the minion schemes.
+    expect(x.log.filter((l) => l.text.includes("no trama")).length).toBe(2);
+  });
+
+  it("no duplicate status: a second Aturdido does nothing", () => {
+    const { s } = setup();
+    s.villain.stunned = true;
+    const toHalcon = toHand(s, "halcon-plateado");
+    const pay = [toHand(s, "celula-energia"), toHand(s, "golpe-certero")];
+    act(s, { a: "play", player: 0, card: toHalcon, pay });
+    expect(s.log.some((l) => l.text.includes("ya está Aturdido"))).toBe(true);
+  });
+
+  it("payment is tracked by type: ¡Por Aurelia! removes 3 when paid with 🧠, 2 otherwise", () => {
+    // Lumen is printed 🌟 Comodín, which counts as 🧠.
+    for (const [res, removed] of [["chispa-genio", 3], ["pulso-fuerza", 2], ["lumen-ia", 3]] as const) {
+      const { s } = setup();
+      mainPlan(s).threat = 5;
+      const card = toHand(s, "por-aurelia");
+      act(s, { a: "play", player: 0, card, pay: [toHand(s, res)] });
+      expect(mainPlan(s).threat, res).toBe(5 - removed);
+    }
+  });
+
+  it("Pulso Iónico: 1 damage, then +2 per ⚡ (🌟 counts) among the top 5 cards, shown as a combo", () => {
+    const { s, p } = setup();
+    const card = toHand(s, "pulso-ionico");
+    const pay = [toHand(s, "golpe-certero"), toHand(s, "golpe-certero", 1)];
+    // ⚡⚡ + ⚡ + 🧠 + 🌟 + ✊  →  4 energy
+    onTop(s, ["celula-energia", "guantelete-plasma", "visor-tactico", "lumen-ia", "canon-hombro"]);
+    act(s, { a: "play", player: 0, card, pay });
+    expect(s.villain.damage).toBe(1 + 8);
+    expect(s.combo?.cards).toEqual(["celula-energia", "guantelete-plasma", "visor-tactico", "lumen-ia", "canon-hombro"]);
+    expect(s.combo?.text).toContain("+8");
+    expect(p.discard).toEqual(expect.arrayContaining(copies(s, "lumen-ia")));
+  });
+
+  it("Torvo reads the top card after attacking: ✊ +2, 🧠 1 to everyone, ⚡ discards him, 🌟 all three", () => {
+    const cases: [string, (s: GameState, torvo: string) => void][] = [
+      ["pulso-fuerza", (s) => { expect(s.villain.damage).toBe(5); }],
+      ["chispa-genio", (s, t) => { expect(s.villain.damage).toBe(4); expect(s.players[0].damage).toBe(1); expect(s.players[0].play.find((c) => c.uid === t)?.damage).toBe(1); }],
+      ["celula-energia", (s, t) => { expect(s.villain.damage).toBe(3); expect(s.players[0].play.some((c) => c.uid === t)).toBe(false); expect(s.players[0].discard).toContain(t); }],
+      ["lumen-ia", (s, t) => { expect(s.villain.damage).toBe(3 + 2 + 1); expect(s.players[0].damage).toBe(1); expect(s.players[0].play.some((c) => c.uid === t)).toBe(false); }],
+    ];
+    for (const [top, check] of cases) {
+      const { s } = setup();
+      const torvo = toPlay(s, "torvo-iracundo");
+      onTop(s, [top]);
+      act(s, { a: "allyAttack", player: 0, ally: torvo });
+      expect(s.combo?.cards, top).toEqual([top]);
+      check(s, torvo);
+    }
+  });
+
+  it("Zarpa heals 2 after her attack defeats an enemy", () => {
+    const { s, p } = setup();
+    const z = toPlay(s, "zarpa-cazadora");
+    p.play.find((c) => c.uid === z)!.damage = 1;
+    const m = engage(s, "artificiero");
+    act(s, { a: "allyAttack", player: 0, ally: z });
+    answer(s, m);
+    expect(p.engaged).toHaveLength(0);
+    expect(p.play.find((c) => c.uid === z)!.damage).toBe(0); // 1 + 1 (attacking) − 2
+  });
+
+  it("Halcón Plateado stuns an enemy when it enters play", () => {
+    const { s } = setup();
+    const h = toHand(s, "halcon-plateado");
+    act(s, { a: "play", player: 0, card: h, pay: [toHand(s, "celula-energia"), toHand(s, "golpe-certero")] });
+    expect(s.villain.stunned).toBe(true);
+  });
+
+  it("Embate Frontal: overkill to the villain only when paid with ✊", () => {
+    for (const [payDef, villainDmg] of [["pulso-fuerza", 3], ["chispa-genio", 0]] as const) {
+      const { s, p } = setup();
+      const m = engage(s, "artificiero");
+      const card = toHand(s, "embate-frontal");
+      act(s, { a: "play", player: 0, card, pay: [toHand(s, payDef)] });
+      expect(p.engaged.some((x) => x.uid === m)).toBe(false);
+      expect(s.villain.damage, payDef).toBe(villainDmg);
+    }
+  });
+
+  it("Furia Imparable hits two different enemies", () => {
+    const { s, p } = setup();
+    const m = engage(s, "maton-sueldo");
+    const card = toHand(s, "furia-imparable");
+    act(s, { a: "play", player: 0, card, pay: [toHand(s, "pulso-fuerza"), toHand(s, "golpe-certero")] });
+    expect(s.prompt?.options.map((o) => o.id).sort()).toEqual([m, "villain"].sort());
+    answer(s, "villain");
+    expect(s.prompt).toBeNull(); // only one other enemy: chosen automatically
+    expect(s.villain.damage).toBe(3);
+    expect(p.engaged).toHaveLength(0); // Matón has 3 health
+  });
+
+  it("Visor Táctico removes 1 from one plan, or from every plan with Aéreo", () => {
+    const { s } = setup();
+    const side = copies(s, "caos-avenida")[0];
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== side);
+    s.plans.push({ uid: side, def: "caos-avenida", threat: 4 });
+    mainPlan(s).threat = 3;
+    const visor = toPlay(s, "visor-tactico");
+    act(s, { a: "useCard", player: 0, card: visor });
+    expect(s.prompt?.kind).toBe("target");
+    answer(s, "main");
+    expect(mainPlan(s).threat).toBe(2);
+    s.players[0].play.find((c) => c.uid === visor)!.exhausted = false;
+    toPlay(s, "propulsores-dorsales");
+    act(s, { a: "useCard", player: 0, card: visor });
+    expect(s.prompt).toBeNull();
+    expect(mainPlan(s).threat).toBe(1);
+    expect(s.plans.find((x) => x.uid === side)?.threat).toBe(3);
+  });
+
+  it("Núcleo de Fusión needs a ⚡ card; Guantelete deals 2 if you pay ⚡, 1 if not", () => {
+    const { s, p } = setup();
+    const core = toPlay(s, "nucleo-fusion");
+    p.heroExhausted = true;
+    expect(act(s, { a: "useCard", player: 0, card: core })).toMatch(/Necesitas descartar una carta con ⚡/);
+    const cell = toHand(s, "celula-energia");
+    act(s, { a: "useCard", player: 0, card: core });
+    expect(s.prompt?.options.map((o) => o.id)).toEqual([cell]); // no "don't pay" option
+    answer(s, cell);
+    expect(p.heroExhausted).toBe(false);
+    expect(p.discard).toContain(cell);
+
+    const g = toPlay(s, "guantelete-plasma");
+    act(s, { a: "useCard", player: 0, card: g });
+    answer(s, "no");
+    expect(s.villain.damage).toBe(1);
+    p.play.find((c) => c.uid === g)!.exhausted = false;
+    const g2 = toHand(s, "guantelete-plasma", 1);
+    act(s, { a: "useCard", player: 0, card: g });
+    answer(s, g2);
+    expect(s.villain.damage).toBe(3);
+  });
+
+  it("Persecución removes 3 after you defeat an enemy this turn, 1 otherwise; Botiquín heals a friend", () => {
+    const { s, p } = setup();
+    mainPlan(s).threat = 6;
+    const card = toHand(s, "persecucion");
+    act(s, { a: "play", player: 0, card, pay: [toHand(s, "golpe-certero")] });
+    expect(mainPlan(s).threat).toBe(5);
+    const m = engage(s, "artificiero");
+    s.players[0].engaged[0].damage = 1;
+    act(s, { a: "attack", player: 0 });
+    answer(s, m);
+    const again = toHand(s, "persecucion");
+    act(s, { a: "play", player: 0, card: again, pay: [toHand(s, "golpe-certero", 1)] });
+    expect(mainPlan(s).threat).toBe(2);
+
+    p.damage = 4;
+    const kit = toPlay(s, "botiquin-campo");
+    act(s, { a: "useCard", player: 0, card: kit });
+    expect(p.damage).toBe(2);
+  });
+});

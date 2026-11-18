@@ -1,6 +1,7 @@
 import { ENCOUNTER_CARDS, PLAYER_CARDS } from "../data/content";
 import type { HeroDef, PlayerCardDef, PlayerCardType } from "../engine/types";
-import { EncounterCard, PlayerCard, traitName, typeName } from "./Card";
+import { RES_NAME } from "../engine/game";
+import { EncounterCard, PlayerCard, ResIcons, traitName, typeName } from "./Card";
 import { Modal, Portrait } from "./Table";
 
 const GROUPS: { type: PlayerCardType; title: string }[] = [
@@ -27,7 +28,7 @@ export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => vo
       <div class="deck-head" style={{ ["--hero" as string]: hero.colour }}>
         <Portrait artKey={`hero-${hero.id}`} glyph={hero.glyph} />
         <div class="grow">
-          <div class="kicker">Mazo · {hero.deck.length} cartas</div>
+          <div class="kicker">Mazo · {hero.deck.length} cartas · {resSummary(hero.deck)}</div>
           <div class="title">{h.name}</div>
           <div class="deck-summary">
             {GROUPS.map((g) => {
@@ -96,6 +97,13 @@ export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => vo
   );
 }
 
+/** How many printed resources of each type the deck has, e.g. "⚡17 🧠10 ✊15 🌟1". */
+function resSummary(deck: string[]): string {
+  const n: Record<string, number> = {};
+  for (const id of deck) { const c = PLAYER_CARDS.get(id)!; n[c.resType] = (n[c.resType] ?? 0) + c.resources; }
+  return [["energia", "⚡"], ["mental", "🧠"], ["fisico", "✊"], ["comodin", "🌟"]].filter(([k]) => n[k]).map(([k, i]) => `${i}${n[k]}`).join(" ");
+}
+
 function DeckRow({ def, count }: { def: PlayerCardDef; count: number }) {
   const traits = def.traits?.map(traitName).join(", ");
   return (
@@ -109,8 +117,8 @@ function DeckRow({ def, count }: { def: PlayerCardDef; count: number }) {
         <div class="muted small">
           {typeName(def.type)}{traits ? ` · ${traits}` : ""}
           {def.type !== "recurso" && ` · Coste ${def.cost}`}
-          {` · Vale ${def.resources} ◆`}
         </div>
+        <div class="row small res-row"><ResIcons type={def.resType} n={def.resources} /><span>{def.resources === 2 ? "Doble " : ""}{RES_NAME[def.resType]}</span></div>
         {def.ally && (
           <div class="statline small">
             <span>⚔ {def.ally.fuerza}</span><span>✦ {def.ally.ingenio}</span><span>♥ {def.ally.vida}</span>
