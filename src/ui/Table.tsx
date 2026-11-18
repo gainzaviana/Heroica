@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import {
-  allyCards, canPlay, ecard, enemiesFor, handSize, heroName, heroOf, heroStats, mainPlan, otherCards, pcard, planLimit, planName, resourcesOf, scenarioOf, villainStats,
+  allyCards, canPlay, ecard, enemiesFor, handSize, heroName, heroOf, heroStats, mainPlan, otherCards, pcard, planLimit, planName, resourcesOf, scenarioOf, stageList, villainStats,
 } from "../engine/game";
 import type { GameState } from "../engine/types";
 import { ENCOUNTER_CARDS, PLAYER_CARDS } from "../data/content";
@@ -86,10 +86,10 @@ function VillainPanel({ s, viewing, canAct, onEncounter }: { s: GameState; viewi
       <div class="villain panel">
         <Portrait artKey={`villain-${sc.id}`} glyph={sc.villain.glyph} />
         <div class="grow">
-          <div class="kicker">Villano · fase {s.villain.stage + 1} de {sc.villain.stages.length}</div>
+          <div class="kicker">Villano · fase {s.villain.stage + 1} de {stageList(s).length}</div>
           <div class="title">{v.name}</div>
           <Meter value={v.vidaMax - s.villain.damage} max={v.vidaMax} kind="hp" label="Vida" />
-          <div class="statline"><span>⚔ Fuerza {v.fuerza}</span><span>☾ Plan {v.plan}</span>{s.villain.stunned && <span class="chip stun">Aturdido</span>}</div>
+          <div class="statline"><span>⚔ Fuerza {v.fuerza}</span><span>☾ Plan {v.plan}</span>{s.villain.stunned && <span class="chip stun">Aturdido</span>}{s.villain.tough && <span class="chip tough" title="El próximo daño que reciba se anula">Duro</span>}</div>
           {v.text && <div class="muted small">{v.text}</div>}
         </div>
       </div>
@@ -166,7 +166,8 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           {hero && <button class="act red" disabled={p.heroExhausted} onClick={() => store.act({ a: "attack", player: i })}>Atacar ({st.fuerza})</button>}
           {hero && <button class="act blue" disabled={p.heroExhausted} onClick={() => store.act({ a: "thwart", player: i })}>Contener ({st.ingenio})</button>}
           {!hero && <button class="act green" disabled={p.heroExhausted || p.damage === 0} onClick={() => store.act({ a: "recover", player: i })}>Recuperar ({h.identity.recuperacion})</button>}
-          {hero && ability.timing === "action" && <button class="act gold" disabled={p.heroAbilityUsed} onClick={() => store.act({ a: "heroAbility", player: i })}>{ability.text}</button>}
+          {hero && ability?.timing === "action" && <button class="act gold" disabled={p.heroAbilityUsed} onClick={() => store.act({ a: "heroAbility", player: i })}>{ability.text}</button>}
+          {!hero && h.identityAbility && <button class="act gold" disabled={!!p.identityAbilityUsed} onClick={() => store.act({ a: "identityAbility", player: i })}>{h.identityAbility.text}</button>}
           <button class="act ghost" disabled={p.flippedThisTurn} onClick={() => store.act({ a: "flip", player: i })}>{hero ? `Volver a ${h.identity.name}` : `Transformarse en ${h.hero.name}`}</button>
         </div>
       )}
@@ -192,7 +193,7 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           {otherCards(s, i).length === 0 && <div class="empty">Nada todavía.</div>}
           {otherCards(s, i).map((c) => {
             const d = pcard(s, c.uid);
-            const usable = canAct && d.ability?.timing === "action" && !(d.ability.cost === "exhaust" ? c.exhausted : c.usedThisRound);
+            const usable = canAct && d.ability?.timing === "action" && !(d.ability.cost === "exhaust" ? c.exhausted : c.usedThisRound) && (!d.ability.heroOnly || p.form === "heroe");
             return <PlayerCard key={c.uid} def={d} size="sm" exhausted={c.exhausted} onClick={() => onAlly(c.uid)} badge={usable ? <span class="chip ready">Usar</span> : undefined} />;
           })}
         </div>
@@ -285,7 +286,7 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
       const c = p.play.find((x) => x.uid === sheet.uid);
       if (!c) { close(); return null; }
       const d = PLAYER_CARDS.get(c.def)!;
-      const usable = d.ability?.timing === "action" && !(d.ability.cost === "exhaust" ? c.exhausted : c.usedThisRound);
+      const usable = d.ability?.timing === "action" && !(d.ability.cost === "exhaust" ? c.exhausted : c.usedThisRound) && (!d.ability.heroOnly || p.form === "heroe");
       return (
         <Modal onClose={close}>
           <div class="center"><PlayerCard def={d} size="lg" exhausted={c.exhausted} damage={c.damage} /></div>
@@ -356,10 +357,16 @@ function EndOverlay({ s }: { s: GameState }) {
   );
 }
 
-export function Modal({ children, onClose }: { children: preact.ComponentChildren; onClose: () => void }) {
+export function Modal({ children, onClose, wide, label }: { children: preact.ComponentChildren; onClose: () => void; wide?: boolean; label?: string }) {
+  // Escape closes it, like tapping outside.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
   return (
     <div class="modal-backdrop" onClick={onClose}>
-      <div class="modal panel" role="dialog" onClick={(e) => e.stopPropagation()}>{children}</div>
+      <div class={`modal panel${wide ? " wide" : ""}`} role="dialog" aria-modal="true" aria-label={label} onClick={(e) => e.stopPropagation()}>{children}</div>
     </div>
   );
 }
@@ -373,7 +380,8 @@ export function Rules() {
       <p><b>Al terminar el turno</b> descartas lo que quieras, robas hasta tu tamaño de mano y se prepara todo.</p>
       <p><b>Fase del villano:</b> el plan principal avanza; el villano y tus esbirros <b>atacan</b> si estás en forma de héroe (puedes defenderte con el héroe o bloquear con un aliado) o <b>traman</b> si eres identidad (añaden amenaza). La carta de refuerzo ✹ suma a su ataque o plan. Después cada jugador recibe una carta de encuentro: esbirros, traiciones, planes secundarios o vínculos.</p>
       <p><b>Guardia:</b> mientras un esbirro con Guardia esté contigo, no puedes atacar al villano. <b>Aceleración:</b> el plan principal avanza más cada ronda.</p>
-      <p><b>Experto:</b> el villano gana +1 Fuerza y +2 vida por jugador en cada fase, y el mazo de encuentros incluye cartas más duras.</p>
+      <p><b>Experto:</b> el villano gana +1 Fuerza y +2 vida por jugador en cada fase, y el mazo de encuentros incluye cartas más duras. Algunos escenarios cambian esto: en <i>El Asalto al Arsenal</i>, Experto usa las fases II y III del villano y su propio conjunto Experto.</p>
+      <p><b>Duro:</b> el próximo daño que reciba el villano se anula, y pierde Duro. <b>Némesis:</b> cada héroe puede tener un enemigo personal apartado; cuando una carta lo llama, su esbirro se enfrenta a ti y su plan entra en juego. <b>Obligación:</b> carta personal del héroe que se baraja en los encuentros y siempre la resuelve su dueño.</p>
       <p><b>A dos manos:</b> controlas dos héroes; juegan por turnos y el primer jugador cambia cada ronda.</p>
     </div>
   );

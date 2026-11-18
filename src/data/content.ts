@@ -90,6 +90,47 @@ const cards: PlayerCardDef[] = [
   { id: "automata-ayudante", name: "Autómata Ayudante", type: "aliado", cost: 2, resources: 1, glyph: "🤖",
     text: "Aliado. Atacar o contener le cuesta 1 daño.", ally: { vida: 2, fuerza: 1, ingenio: 1, consFuerza: 1, consIngenio: 1 } },
 
+  // Vanguardia de Titanio (Iria Montalbán): an engineer who fights inside a modular titanium suit.
+  // Every Tecnología piece in play widens her hand in hero form (1 → up to 7).
+  { id: "guantelete-plasma", name: "Guantelete de Plasma", type: "mejora", cost: 2, resources: 1, glyph: "🧤", traits: ["tecnologia"],
+    text: "Tecnología. Héroe. Acción, agota esta carta: inflige 2 daño a un enemigo.",
+    ability: { timing: "action", cost: "exhaust", heroOnly: true, effects: [{ do: "damage", target: "chooseEnemy", amount: 2 }], text: "Disparo de plasma: 2 daño" } },
+  { id: "visor-tactico", name: "Visor Táctico", type: "mejora", cost: 2, resources: 1, glyph: "🥽", traits: ["tecnologia"],
+    text: "Tecnología. Tu héroe obtiene +1 Ingenio.", bonus: { ingenio: 1 } },
+  { id: "nucleo-fusion", name: "Núcleo de Fusión", type: "mejora", cost: 3, resources: 1, glyph: "⚛", traits: ["tecnologia"],
+    text: "Tecnología. Héroe. Acción, una vez por ronda: prepara a tu héroe.",
+    ability: { timing: "action", cost: "once", heroOnly: true, effects: [{ do: "readyHero" }], text: "Recarga: prepara a tu héroe" } },
+  { id: "propulsores-dorsales", name: "Propulsores Dorsales", type: "mejora", cost: 2, resources: 1, glyph: "🚀", traits: ["tecnologia"],
+    text: "Tecnología. Tu héroe obtiene +1 Aguante y +1 Vida máxima.", bonus: { aguante: 1, vidaMax: 1 } },
+  { id: "canon-hombro", name: "Cañón de Hombro", type: "mejora", cost: 4, resources: 1, glyph: "💠", traits: ["tecnologia"],
+    text: "Tecnología. Héroe. Acción, agota esta carta: inflige 3 daño a un enemigo.",
+    ability: { timing: "action", cost: "exhaust", heroOnly: true, effects: [{ do: "damage", target: "chooseEnemy", amount: 3 }], text: "Andanada: 3 daño" } },
+  { id: "lumen-ia", name: "Lumen, IA de combate", type: "aliado", cost: 3, resources: 1, glyph: "🛰",
+    text: "Aliado. Dron con inteligencia propia. Atacar o contener le cuesta 1 daño.", ally: { vida: 3, fuerza: 2, ingenio: 1, consFuerza: 1, consIngenio: 1 } },
+  { id: "forja-tecnologica", name: "Forja Tecnológica", type: "apoyo", cost: 2, resources: 1, glyph: "🏭",
+    text: "Apoyo. Acción, agota esta carta: roba 1 carta.", ability: { timing: "action", cost: "exhaust", effects: [{ do: "draw", amount: 1 }], text: "Roba 1 carta" } },
+  { id: "pulso-ionico", name: "Pulso Iónico", type: "evento", cost: 1, resources: 1, glyph: "⚡",
+    text: "Héroe. Acción: inflige 1 daño a un enemigo, +1 por cada Tecnología que tengas en juego.", play: { timing: "action", heroOnly: true, effects: [{ do: "damage", target: "chooseEnemy", amount: 1, plusTrait: "tecnologia" }] } },
+  { id: "impacto-supersonico", name: "Impacto Supersónico", type: "evento", cost: 3, resources: 1, glyph: "💨",
+    text: "Héroe. Acción: inflige 4 daño a un enemigo y lo aturde.", play: { timing: "action", heroOnly: true, effects: [{ do: "damage", target: "chooseEnemy", amount: 4, stun: true }] } },
+
+  // Furia: an aggressive pool (Vanguardia's deck uses it).
+  { id: "embate-frontal", name: "Embate Frontal", type: "evento", cost: 1, resources: 1, glyph: "🥊",
+    text: "Héroe. Acción: inflige 3 daño a un esbirro.", play: { timing: "action", heroOnly: true, effects: [{ do: "damage", target: "chooseMinion", amount: 3 }] } },
+  { id: "furia-imparable", name: "Furia Imparable", type: "evento", cost: 2, resources: 1, glyph: "🌋",
+    text: "Héroe. Acción: inflige 3 daño a un enemigo (4 si controlas una mejora).", play: { timing: "action", heroOnly: true, effects: [{ do: "damage", target: "chooseEnemy", amount: 3, ifUpgrade: 4 }] } },
+  { id: "veterana-asalto", name: "Veterana de Asalto", type: "aliado", cost: 3, resources: 1, glyph: "🎖",
+    text: "Aliado. Solo sabe pelear. Atacar le cuesta 1 daño.", ally: { vida: 3, fuerza: 3, ingenio: 0, consFuerza: 1, consIngenio: 1 } },
+  { id: "escuadron-choque", name: "Escuadrón de Choque", type: "aliado", cost: 2, resources: 1, glyph: "👥",
+    text: "Aliado. Atacar le cuesta 1 daño.", ally: { vida: 2, fuerza: 2, ingenio: 0, consFuerza: 1, consIngenio: 1 } },
+  { id: "instinto-combate", name: "Instinto de Combate", type: "mejora", cost: 1, resources: 1, glyph: "🐺",
+    text: "Tu héroe obtiene +1 Fuerza.", bonus: { fuerza: 1 } },
+  { id: "sala-entrenamiento", name: "Sala de Entrenamiento", type: "apoyo", cost: 3, resources: 1, glyph: "🥋",
+    text: "Apoyo. Acción, agota esta carta: inflige 1 daño a un enemigo.", ability: { timing: "action", cost: "exhaust", effects: [{ do: "damage", target: "chooseEnemy", amount: 1 }], text: "Práctica de tiro: 1 daño" } },
+  { id: "celula-energia", name: "Célula de Energía", type: "recurso", cost: 0, resources: 2, glyph: "🔋", text: "Recurso: vale 2 al pagar una carta." },
+  { id: "chispa-genio", name: "Chispa de Genio", type: "recurso", cost: 0, resources: 2, glyph: "💡", text: "Recurso: vale 2 al pagar una carta." },
+  { id: "pulso-fuerza", name: "Pulso de Fuerza", type: "recurso", cost: 0, resources: 2, glyph: "💪", text: "Recurso: vale 2 al pagar una carta." },
+
   // Shared by every hero.
   { id: "pocion-curacion", name: "Poción de Curación", type: "evento", cost: 1, resources: 1, glyph: "⚗",
     text: "Acción: cura 4 daño a tu héroe.", play: { timing: "action", effects: [{ do: "heal", target: "self", amount: 4 }] } },
@@ -118,6 +159,33 @@ const neutral = [
 ];
 
 export const HEROES: HeroDef[] = [
+  {
+    id: "vanguardia",
+    hero: {
+      name: "Vanguardia de Titanio", fuerza: 1, ingenio: 1, aguante: 1, mano: 1,
+      text: "Armadura modular: en forma de héroe tu mano es 1, +1 por cada Tecnología que tengas en juego (máximo 7).",
+      manoPorRasgo: { trait: "tecnologia", max: 7 },
+    },
+    identity: { name: "Iria Montalbán", recuperacion: 3, mano: 6, text: "Ingeniera prodigio. I+D nocturno: una vez por ronda, mira las 3 primeras cartas de tu mazo, quédate 1 y descarta el resto." },
+    vida: 9,
+    identityAbility: { timing: "action", cost: "once", effects: [{ do: "lookTop", amount: 3 }], text: "I+D nocturno" },
+    deck: [
+      // 15 de Vanguardia
+      "guantelete-plasma", "guantelete-plasma", "visor-tactico", "visor-tactico", "nucleo-fusion", "nucleo-fusion",
+      "propulsores-dorsales", "propulsores-dorsales", "canon-hombro", "lumen-ia", "forja-tecnologica",
+      "pulso-ionico", "pulso-ionico", "impacto-supersonico", "impacto-supersonico",
+      // 25 de Furia y básicas
+      "embate-frontal", "embate-frontal", "furia-imparable", "furia-imparable", "veterana-asalto", "escuadron-choque",
+      "instinto-combate", "instinto-combate", "sala-entrenamiento",
+      "golpe-certero", "golpe-certero", "contraataque", "contraataque", "respiro", "pocion-curacion", "vigilancia", "vigilancia",
+      "aldeana-valiente", "mercenario-posada",
+      "celula-energia", "celula-energia", "chispa-genio", "chispa-genio", "pulso-fuerza", "pulso-fuerza",
+    ],
+    nemesis: ["silas-corven", "opa-hostil", "sabotaje-industrial"],
+    obligation: "junta-accionistas",
+    colour: "#b8322a",
+    glyph: "🛡",
+  },
   {
     id: "brasa",
     hero: { name: "Brasa Rúnica", fuerza: 2, ingenio: 1, aguante: 2, mano: 5, text: "Forja viva: una vez por ronda, después de jugar una mejora, inflige 1 daño a un enemigo." },
@@ -210,6 +278,36 @@ const encounters: EncounterCardDef[] = [
   { id: "pisoton", name: "Pisotón", type: "traicion", boost: 1, glyph: "🦶", text: "El villano se activa contra ti.", reveal: [{ do: "villainActivates" }] },
   { id: "placas-bronce", name: "Placas de Bronce", type: "vinculo", boost: 1, glyph: "🛡", text: "Vínculo: el villano obtiene +1 Fuerza. Héroe, agota a tu héroe: descártalas.", villainBonus: { fuerza: 1 } },
   { id: "puente-roto", name: "Derribar el Puente", type: "plan", boost: 0, glyph: "🌉", text: "Plan secundario (4 amenaza).", sidePlan: { amenaza: 4 } },
+  // Mazagón, el Titán Embestidor
+  { id: "maton-sueldo", name: "Matón a Sueldo", type: "esbirro", boost: 1, glyph: "🪓", text: "Esbirro.", minion: { vida: 3, fuerza: 1, plan: 1 } },
+  { id: "guardaespaldas-blindado", name: "Guardaespaldas Blindado", type: "esbirro", boost: 1, glyph: "🛡", text: "Guardia: mientras esté contigo, no puedes atacar al villano.", minion: { vida: 4, fuerza: 2, plan: 0, guardia: true } },
+  { id: "embestida", name: "Embestida a Toda Máquina", type: "vinculo", boost: 2, glyph: "🐃", oneShot: true, villainBonus: { fuerza: 2 },
+    text: "Vínculo: el villano obtiene +2 Fuerza. Después de su próximo ataque, descártala. Héroe, agota a tu héroe: descártala." },
+  { id: "punos-remachados", name: "Puños Remachados", type: "vinculo", boost: 1, glyph: "🔩", villainBonus: { fuerza: 1 },
+    text: "Vínculo: el villano obtiene +1 Fuerza. Héroe, agota a tu héroe: descártalos." },
+  { id: "piel-acero", name: "Piel de Acero", type: "traicion", boost: 1, glyph: "🪨", text: "El villano obtiene Duro (el próximo daño que reciba se anula). Si ya era Duro: oleada.", reveal: [{ do: "villainTough" }] },
+  { id: "arrollar", name: "Arrollar", type: "traicion", boost: 2, glyph: "🦶", text: "El villano se activa contra ti.", reveal: [{ do: "villainActivates" }] },
+  { id: "caos-avenida", name: "Caos en la Avenida", type: "plan", boost: 0, glyph: "🚧", text: "Plan secundario (4 amenaza).", sidePlan: { amenaza: 4 } },
+  { id: "viejas-cuentas", name: "Viejas Cuentas", type: "traicion", boost: 1, glyph: "🕰", text: "Pon en juego el conjunto némesis de tu héroe (su esbirro se enfrenta a ti). Si no tiene o ya salió: oleada.", reveal: [{ do: "nemesis" }] },
+  // Amenaza de Bomba (modular)
+  { id: "artefacto-explosivo", name: "Artefacto Explosivo", type: "plan", boost: 0, glyph: "💣", text: "Plan secundario (3 amenaza). Detonación y Falsa Alarma lo alimentan.", sidePlan: { amenaza: 3 } },
+  { id: "detonacion", name: "Detonación", type: "traicion", boost: 2, glyph: "💥", text: "Si el Artefacto Explosivo está en juego, estalla: recibes tanto daño como amenaza tenga y se descarta. Si no: oleada.", reveal: [{ do: "detonate", plan: "artefacto-explosivo" }] },
+  { id: "falsa-alarma", name: "Falsa Alarma", type: "traicion", boost: 1, glyph: "🚨", text: "Si el Artefacto Explosivo está en juego, gana 2 amenaza. Si no, búscalo y ponlo en juego (si no aparece: oleada).", reveal: [{ do: "armPlan", plan: "artefacto-explosivo", amount: 2 }] },
+  { id: "artificiero", name: "Artificiero", type: "esbirro", boost: 1, glyph: "🧨", text: "Esbirro.", minion: { vida: 2, fuerza: 1, plan: 2 } },
+  // Experto del Titán
+  { id: "carga-brutal", name: "Carga Brutal", type: "traicion", boost: 2, glyph: "🐂", text: "En forma de héroe recibes 3 daño; si no, añade 2 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 3, ifIdentity: { do: "addThreat", amount: 2 } }] },
+  { id: "bramido", name: "Bramido", type: "traicion", boost: 2, glyph: "📢", text: "El villano obtiene Duro (si ya lo era: oleada) y se activa contra ti.", reveal: [{ do: "villainTough" }, { do: "villainActivates" }] },
+  { id: "mercenario-veterano", name: "Mercenario Veterano", type: "esbirro", boost: 2, glyph: "🎯", text: "Guardia: mientras esté contigo, no puedes atacar al villano.", minion: { vida: 5, fuerza: 2, plan: 1, guardia: true } },
+  // Némesis de Vanguardia
+  { id: "silas-corven", name: "Silas Corven, el Magnate de Hierro", type: "esbirro", boost: 2, glyph: "🎩", text: "Esbirro némesis de Vanguardia.", minion: { vida: 6, fuerza: 2, plan: 2 } },
+  { id: "opa-hostil", name: "OPA Hostil", type: "plan", boost: 0, glyph: "📉", text: "Plan secundario némesis (4 amenaza). Aceleración.", sidePlan: { amenaza: 4, aceleracion: true } },
+  { id: "sabotaje-industrial", name: "Sabotaje Industrial", type: "traicion", boost: 1, glyph: "🔧", text: "En forma de héroe recibes 2 daño; si no, añade 2 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 2, ifIdentity: { do: "addThreat", amount: 2 } }] },
+  { id: "junta-accionistas", name: "Junta de Accionistas", type: "obligacion", boost: 1, glyph: "📊",
+    text: "Obligación de Iria Montalbán. Elige: acudes (tu héroe queda agotado y pierde su próxima acción) o faltas (añade 2 amenaza al plan principal).",
+    reveal: [{ do: "choose", text: "Junta de Accionistas: ¿acudes?", options: [
+      { label: "Acudir: tu héroe queda agotado", effects: [{ do: "exhaustHero" }] },
+      { label: "Faltar: +2 amenaza al plan principal", effects: [{ do: "addThreat", target: "mainPlan", amount: 2 }] },
+    ] }] },
   // Experto
   { id: "furia-desatada", name: "Furia Desatada", type: "traicion", boost: 2, glyph: "💢", text: "El villano se activa contra ti. Oleada: revela otra carta.", reveal: [{ do: "villainActivates" }, { do: "surge" }] },
   { id: "golpe-maestro", name: "Golpe Maestro", type: "traicion", boost: 2, glyph: "☠", text: "En forma de héroe recibes 2 daño; si no, añade 2 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 2, ifIdentity: { do: "addThreat", amount: 2 } }] },
@@ -225,6 +323,9 @@ export const ENCOUNTER_SETS: Record<string, string[]> = {
   "senor-asedio": ["automata-asedio", "automata-asedio", "saboteador", "saboteador", "bombardeo", "bombardeo", "refuerzos", "ariete", "armadura-asedio"],
   "culto-luna": ["cultista-lunar", "cultista-lunar", "ritual-oscuro", "altar-lunar"],
   coloso: ["maton-acorazado", "maton-acorazado", "bandido-saqueador", "bandido-saqueador", "carga-imparable", "carga-imparable", "pisoton", "pisoton", "placas-bronce", "puente-roto"],
+  titan: ["maton-sueldo", "maton-sueldo", "guardaespaldas-blindado", "embestida", "punos-remachados", "piel-acero", "piel-acero", "arrollar", "arrollar", "caos-avenida", "viejas-cuentas"],
+  "amenaza-bomba": ["artefacto-explosivo", "detonacion", "falsa-alarma", "falsa-alarma", "artificiero"],
+  "experto-titan": ["carga-brutal", "bramido", "mercenario-veterano"],
   experto: ["furia-desatada", "golpe-maestro"],
   estandar: ["avance-oscuro", "emboscada"],
 };
@@ -291,6 +392,25 @@ SCENARIOS.unshift({
   },
   mainPlan: { name: "La Estampida", inicioPorJugador: 0, aceleracionPorJugador: 1, limitePorJugador: 15, text: "Si llega al límite, la estampida arrasa la ciudad: derrota." },
   encounterSets: ["coloso", "legion-sombras", "estandar"],
+});
+
+SCENARIOS.unshift({
+  id: "asalto-arsenal",
+  name: "El Asalto al Arsenal",
+  intro: "Mazagón, el Titán Embestidor, ha venido a por el arsenal de Aurelia, y alguien ha dejado una bomba en el mercado. Detén su carga antes de que el arsenal caiga.",
+  villain: {
+    name: "Mazagón, el Titán Embestidor",
+    glyph: "🐃",
+    stages: [
+      { name: "Mazagón I", vidaPorJugador: 14, fuerza: 2, plan: 1, text: "Golpea fuerte y trama poco." },
+      { name: "Mazagón II", vidaPorJugador: 15, fuerza: 3, plan: 1, text: "Al revelarse: busca Embestida a Toda Máquina y vincúlasela.", onReveal: { attach: "embestida" } },
+      { name: "Mazagón III", vidaPorJugador: 16, fuerza: 4, plan: 1, text: "Al revelarse: obtiene Duro.", onReveal: { tough: true } },
+    ],
+    stagesFor: { normal: [0, 1], expert: [1, 2] },
+  },
+  mainPlan: { name: "El Asalto al Arsenal", inicioPorJugador: 0, aceleracionPorJugador: 1, limitePorJugador: 14, text: "Si llega al límite, Mazagón saquea el arsenal: derrota." },
+  encounterSets: ["titan", "amenaza-bomba", "estandar"],
+  expertSets: ["experto-titan"],
 });
 
 export const PLAYER_CARDS = new Map(cards.map((c) => [c.id, c]));

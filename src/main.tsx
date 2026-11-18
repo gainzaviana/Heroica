@@ -1,7 +1,9 @@
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import "./styles.css";
-import { HEROES, SCENARIOS } from "./data/content";
+import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, SCENARIOS } from "./data/content";
+import type { ScenarioDef } from "./engine/types";
+import { DeckViewer } from "./ui/DeckViewer";
 import { store, useStore } from "./ui/store";
 import { Modal, Portrait, Rules, Table } from "./ui/Table";
 
@@ -11,6 +13,7 @@ function Start() {
   const [scenario, setScenario] = useState(SCENARIOS[0].id);
   const [rules, setRules] = useState(false);
   const [difficulty, setDifficulty] = useState<"normal" | "experto">("normal");
+  const [deck, setDeck] = useState<string>();
   const toggle = (id: string) => setHeroes(heroes.includes(id) ? heroes.filter((h) => h !== id) : heroes.length >= 2 ? [heroes[1], id] : [...heroes, id]);
   const sc = SCENARIOS.find((x) => x.id === scenario)!;
   return (
@@ -26,7 +29,8 @@ function Start() {
           {HEROES.map((h) => {
             const on = heroes.includes(h.id);
             return (
-              <button key={h.id} class={`pick${on ? " on" : ""}`} style={{ ["--hero" as string]: h.colour }} onClick={() => toggle(h.id)} aria-pressed={on}>
+              <div key={h.id} class="pick-wrap">
+              <button class={`pick${on ? " on" : ""}`} style={{ ["--hero" as string]: h.colour }} onClick={() => toggle(h.id)} aria-pressed={on}>
                 <Portrait artKey={`hero-${h.id}`} glyph={h.glyph} />
                 <span class="title">{h.hero.name}</span>
                 <span class="muted small">{h.identity.name}</span>
@@ -34,6 +38,8 @@ function Start() {
                 <span class="small">{h.hero.text}</span>
                 {on && <span class="chip ready">{heroes.indexOf(h.id) === 0 ? "Jugador 1" : "Jugador 2"}</span>}
               </button>
+              <button class="act ghost deck-btn" onClick={() => setDeck(h.id)}>Ver mazo ({h.deck.length} cartas)</button>
+              </div>
             );
           })}
         </div>
@@ -58,15 +64,27 @@ function Start() {
             </button>
           ))}
         </div>
-        <p class="muted small">{difficulty === "normal" ? "La experiencia estándar." : "El villano tiene +1 Fuerza y +2 vida por jugador en cada fase, y se añade el conjunto Experto (Furia Desatada, Golpe Maestro)."}</p>
+        <p class="muted small">{difficultyText(sc, difficulty)}</p>
       </section>
       <button class="act gold wide big" disabled={!heroes.length} onClick={() => store.start(scenario, heroes, difficulty)}>
         {heroes.length === 2 ? "Empezar a dos manos" : "Empezar en solitario"}
       </button>
       <button class="act ghost wide" onClick={() => setRules(true)}>Cómo se juega</button>
+      {deck && <DeckViewer hero={HEROES.find((h) => h.id === deck)!} onClose={() => setDeck(undefined)} />}
       {rules && <Modal onClose={() => setRules(false)}><Rules /><button class="act ghost wide" onClick={() => setRules(false)}>Cerrar</button></Modal>}
     </main>
   );
+}
+
+/** What Normal and Experto mean for this scenario. */
+function difficultyText(sc: ScenarioDef, d: "normal" | "experto"): string {
+  const stages = (ix: number[]) => ix.map((k) => sc.villain.stages[k].name).join(" y ");
+  const expertCards = (sc.expertSets ?? ["experto"]).flatMap((set) => ENCOUNTER_SETS[set]).map((id) => ENCOUNTER_CARDS.get(id)!.name);
+  const sf = sc.villain.stagesFor;
+  if (d === "normal") return sf ? `Fases del villano: ${stages(sf.normal)}.` : "La experiencia estándar.";
+  return sf
+    ? `Fases del villano: ${stages(sf.expert)}. Se añaden ${expertCards.length} cartas Experto: ${expertCards.join(", ")}.`
+    : `El villano tiene +1 Fuerza y +2 vida por jugador en cada fase, y se añade el conjunto Experto (${expertCards.join(", ")}).`;
 }
 
 function App() {

@@ -27,7 +27,14 @@ export type Effect =
   | { do: "readyHero" }
   | { do: "villainActivates" } // the villain activates against this player
   | { do: "heroDamage"; amount: number; ifIdentity?: { do: "addThreat"; amount: number } }
-  | { do: "surge" }; // reveal another encounter card
+  | { do: "surge" } // reveal another encounter card
+  | { do: "lookTop"; amount: number } // look at the top cards of your deck, keep one, discard the rest
+  | { do: "exhaustHero" } // the hero loses its next action
+  | { do: "choose"; text: string; options: { label: string; effects: Effect[] }[] } // the player picks one branch
+  | { do: "villainTough" } // the villain gains Duro; if it already has it, surge
+  | { do: "nemesis" } // the revealing hero's nemesis set comes into play; if there is none, surge
+  | { do: "armPlan"; plan: string; amount: number } // add threat to that side plan, or put it into play
+  | { do: "detonate"; plan: string }; // damage equal to that side plan's threat, then discard it; if absent, surge
 
 /** When a card's ability can be used. */
 export type Timing =
@@ -36,12 +43,12 @@ export type Timing =
   | "afterAttack" // response: after an enemy attacked you
   | "afterUpgrade"; // response: after you play an upgrade
 
-export interface Ability { timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string }
+export interface Ability { timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string; heroOnly?: boolean }
 
 // MARK: Cards
 
 export type PlayerCardType = "aliado" | "mejora" | "apoyo" | "evento" | "recurso";
-export type EncounterCardType = "esbirro" | "traicion" | "plan" | "vinculo";
+export type EncounterCardType = "esbirro" | "traicion" | "plan" | "vinculo" | "obligacion";
 
 export interface Stats { fuerza?: number; ingenio?: number; aguante?: number }
 
@@ -81,30 +88,53 @@ export interface EncounterCardDef {
   reveal?: Effect[];
   /** Attachments: added to the villain's stats. */
   villainBonus?: { fuerza?: number; plan?: number };
+  /** Attachments: discarded after the villain's next attack. */
+  oneShot?: boolean;
   glyph: string;
 }
 
 export interface HeroDef {
   id: string;
-  hero: { name: string; fuerza: number; ingenio: number; aguante: number; mano: number; text: string };
+  hero: {
+    name: string; fuerza: number; ingenio: number; aguante: number; mano: number; text: string;
+    /** Hero form: +1 hand size per card in play with this trait, up to `max`. */
+    manoPorRasgo?: { trait: string; max: number };
+  };
   identity: { name: string; recuperacion: number; mano: number; text: string };
   vida: number;
-  /** The hero's own once-per-round ability. */
-  ability: Ability;
+  /** The hero's own once-per-round ability (hero form). */
+  ability?: Ability;
+  /** An action usable once per round in identity form. */
+  identityAbility?: Ability;
   deck: string[];
+  /** Encounter cards set aside until a "nemesis" effect brings them in. */
+  nemesis?: string[];
+  /** Encounter card shuffled into the encounter deck; always resolves against this hero. */
+  obligation?: string;
   colour: string;
   glyph: string;
 }
 
-export interface VillainStage { name: string; vidaPorJugador: number; fuerza: number; plan: number; text?: string }
+export interface VillainStage {
+  name: string; vidaPorJugador: number; fuerza: number; plan: number; text?: string;
+  /** When this stage comes into play: attach a card found in the encounter deck or discard, and/or gain Duro. */
+  onReveal?: { attach?: string; tough?: boolean };
+}
 
 export interface ScenarioDef {
   id: string;
   name: string;
   intro: string;
-  villain: { name: string; stages: VillainStage[]; glyph: string };
+  villain: {
+    name: string; stages: VillainStage[]; glyph: string;
+    /** Which stages are used (indexes into `stages`). Default: all of them in both modes. Setting
+     *  `expert` replaces the generic expert bonus (+1 Fuerza, +2 vida por jugador). */
+    stagesFor?: { normal: number[]; expert: number[] };
+  };
   mainPlan: { name: string; inicioPorJugador: number; aceleracionPorJugador: number; limitePorJugador: number; text: string };
   encounterSets: string[];
+  /** Sets added in Expert mode (default: the shared "experto" set). */
+  expertSets?: string[];
 }
 
 // MARK: State
@@ -138,6 +168,9 @@ export interface PlayerState {
   play: CardInPlay[];
   engaged: MinionState[];
   eliminated: boolean;
+  identityAbilityUsed?: boolean;
+  /** Nemesis cards set aside (uids) until they come into play. */
+  nemesis?: string[];
 }
 
 export type Phase = "jugadores" | "villano" | "fin";
@@ -177,7 +210,8 @@ export interface GameState {
   first: number;
   round: number;
   phase: Phase;
-  villain: { stage: number; damage: number; stunned: boolean; attachments: string[] };
+  /** `stage` is a position in the stages used this game (see stagesFor). Duro: the next damage is cancelled. */
+  villain: { stage: number; damage: number; stunned: boolean; tough?: boolean; attachments: string[] };
   plans: PlanState[];
   encounterDeck: string[];
   encounterDiscard: string[];
