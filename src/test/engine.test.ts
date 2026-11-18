@@ -721,3 +721,86 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
     expect(s.revealed).toBe(true);
   });
 });
+
+describe("Aliados con habilidad", () => {
+  function setup(hero = "soberano", seed = 41) {
+    const s = newGame("asalto-arsenal", [hero], seed);
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = "heroe";
+    return { s, p };
+  }
+  const toPlay = (s: GameState, def: string) => {
+    const p = s.players[0];
+    const u = Object.keys(s.cards).find((x) => s.cards[x] === def) ?? (() => { const id = `x${s.nextUid++}`; s.cards[id] = def; return id; })();
+    p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u);
+    p.play.push({ uid: u, def, exhausted: false, damage: 0 });
+    return u;
+  };
+
+  it("every ally in every hero deck has an ability beyond its stats", () => {
+    for (const h of HEROES) for (const id of new Set(h.deck)) {
+      const c = PLAYER_CARDS.get(id)!;
+      if (!c.ally) continue;
+      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock);
+      expect(has, `${h.id}: ${c.name}`).toBe(true);
+    }
+  });
+
+  it("after-thwart abilities: Lumen draws, the Mago confuses the villain", () => {
+    const { s, p } = setup("vanguardia");
+    mainPlan(s).threat = 5;
+    const lumen = toPlay(s, "lumen-ia");
+    const hand = p.hand.length;
+    act(s, { a: "allyThwart", player: 0, ally: lumen });
+    expect(p.hand.length).toBe(hand + 1);
+    const mago = toPlay(s, "mago-errante");
+    act(s, { a: "allyThwart", player: 0, ally: mago });
+    expect(s.villain.confused).toBe(true);
+  });
+
+  it("block abilities: Escudero prevents 1, Centinela hits the attacker", () => {
+    for (const [ally, check] of [
+      ["escudero-fiel", (s: GameState, u: string) => expect(s.players[0].play.find((c) => c.uid === u)?.damage ?? 99).toBeLessThan(3)],
+      ["centinela-real", (s: GameState) => expect(s.villain.damage).toBe(1)],
+    ] as const) {
+      const { s } = setup("soberano", 42);
+      const u = toPlay(s, ally);
+      act(s, { a: "endTurn", player: 0, discard: [] });
+      expect(s.prompt?.kind).toBe("defense");
+      const before = s.prompt!.text;
+      answer(s, u);
+      while (s.prompt?.kind === "optional") answer(s, "no");
+      expect(s.log.some((l) => l.text.includes("bloquea el golpe")), before).toBe(true);
+      check(s, u);
+    }
+  });
+
+  it("enter-play and action abilities: Capitana readies allies, Coronel gives Duro, Zola heals without exhausting", () => {
+    const { s, p } = setup("funambula");
+    const mage = toPlay(s, "mago-errante");
+    p.play.find((c) => c.uid === mage)!.exhausted = true;
+    const cap = Object.keys(s.cards).find((x) => s.cards[x] === "capitana-fernandez")!;
+    p.deck = p.deck.filter((x) => x !== cap); p.hand.push(cap);
+    const pay = p.deck.splice(0, 4); p.hand.push(...pay);
+    act(s, { a: "play", player: 0, card: cap, pay });
+    expect(p.play.find((c) => c.uid === mage)?.exhausted).toBe(false);
+
+    const x = setup("mole").s;
+    const ruiz = Object.keys(x.cards).find((u) => x.cards[u] === "coronel-ruiz")!;
+    const q = x.players[0];
+    q.deck = q.deck.filter((u) => u !== ruiz); q.hand.push(ruiz);
+    const pay2 = q.deck.splice(0, 3); q.hand.push(...pay2);
+    act(x, { a: "play", player: 0, card: ruiz, pay: pay2 });
+    expect(q.tough).toBe(true);
+
+    const y = setup("soberano", 43);
+    y.p.damage = 4;
+    const zola = toPlay(y.s, "zola-ingeniera");
+    act(y.s, { a: "useCard", player: 0, card: zola });
+    if (y.s.prompt) answer(y.s, `hero:0`);
+    expect(y.p.damage).toBe(2);
+    expect(y.p.play.find((c) => c.uid === zola)?.exhausted).toBe(false);
+    expect(act(y.s, { a: "useCard", player: 0, card: zola })).toBe("Ya la usaste esta ronda.");
+  });
+});

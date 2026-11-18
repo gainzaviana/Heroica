@@ -898,7 +898,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       const st = allyStats(s, c);
       const effects: Effect[] = attack
         ? [{ do: "damage", target: "chooseEnemy", amount: st.fuerza }, { do: "selfDamage", amount: a.consFuerza }, ...(a.onKill ? [{ do: "ifKilled" as const, effects: a.onKill }] : []), ...(a.onAttack ?? [])]
-        : [{ do: "thwart", target: "choosePlan", amount: st.ingenio }, { do: "selfDamage", amount: a.consIngenio }];
+        : [{ do: "thwart", target: "choosePlan", amount: st.ingenio }, { do: "selfDamage", amount: a.consIngenio }, ...(a.onThwart ?? [])];
       runEffects(s, i, effects, 0, { source: c.uid, sourceName: def.name });
       return;
     }
@@ -1234,8 +1234,22 @@ function resolveDefense(s: GameState, r: Extract<Resume, { r: "defense" }>, opti
   const p = s.players[r.player];
   let defender: string | null = null;
   if (option === "hero") { p.heroExhausted = true; defender = "hero"; log(s, `${heroName(s, r.player)} se defiende.`); }
-  else if (option !== "none") { const c = p.play.find((x) => x.uid === option); if (c) { c.exhausted = true; defender = option; log(s, `${pcard(s, option).name} bloquea el golpe.`); } }
-  askInterrupts(s, { r: "interrupts", player: r.player, attacker: r.attacker, amount: r.amount, defender, prevented: 0, oneShots: r.oneShots });
+  let prevented = 0;
+  if (option !== "hero" && option !== "none") {
+    const c = p.play.find((x) => x.uid === option);
+    if (c) {
+      c.exhausted = true; defender = option;
+      const d = pcard(s, option);
+      log(s, `${d.name} bloquea el golpe.`);
+      // The ally's own block ability (prevent damage, hit back…).
+      if (d.ally?.onBlock) {
+        const pool = { amount: 0 };
+        runEffects(s, r.player, d.ally.onBlock, 0, { attacker: r.attacker, preventPool: pool, source: option, sourceName: d.name });
+        prevented = pool.amount;
+      }
+    }
+  }
+  askInterrupts(s, { r: "interrupts", player: r.player, attacker: r.attacker, amount: r.amount, defender, prevented, oneShots: r.oneShots });
 }
 
 function askInterrupts(s: GameState, r: Extract<Resume, { r: "interrupts" }>) {

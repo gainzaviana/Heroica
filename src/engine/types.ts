@@ -130,6 +130,10 @@ export interface PlayerCardDef {
     onAttack?: Effect[];
     /** After its attack defeats an enemy. */
     onKill?: Effect[];
+    /** After it thwarts (its basic thwart). */
+    onThwart?: Effect[];
+    /** When it blocks an attack, before damage ("prevent" lowers the damage; "attacker" is the enemy). */
+    onBlock?: Effect[];
   };
   /** Upgrades: stat bonus to the hero. */
   bonus?: Stats & { vidaMax?: number; mano?: number };
