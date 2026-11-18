@@ -1,6 +1,7 @@
 import { useEffect, useState } from "preact/hooks";
 import { act, answer, newGame, type Action } from "../engine/game";
 import type { GameState } from "../engine/types";
+import { beaten, loadProgress, recordResult, type Progress } from "./progress";
 
 const KEY = "heroica.partida";
 
@@ -15,6 +16,9 @@ const KEY = "heroica.partida";
 class Store {
   state: GameState | null = load();
   previous: string | null = null;
+  /** Saved campaign progress, and the heroes that beat this scenario for the first time in this game. */
+  progress: Progress = loadProgress();
+  firstWins: string[] = [];
   error?: string;
   private listeners = new Set<() => void>();
   private errorTimer?: ReturnType<typeof setTimeout>;
@@ -28,6 +32,7 @@ class Store {
   start(scenario: string, heroes: string[], difficulty: "normal" | "experto" = "normal") {
     this.state = newGame(scenario, heroes, undefined, difficulty);
     this.previous = null;
+    this.firstWins = [];
     this.changed();
   }
 
@@ -56,11 +61,24 @@ class Store {
   private record(snapshot: string) {
     const s = this.state!;
     const before = JSON.parse(snapshot) as GameState;
+    if (!before.result && s.result) this.finish(s);
     const revealed = !!s.revealed;
     s.revealed = false;
     // One step back, only within the players' phase and only if nothing hidden was seen.
     this.previous = s.phase === "jugadores" && before.phase === "jugadores" && !revealed && !s.result ? snapshot : null;
   }
+
+  /** A game just ended: save it to the progress of every hero that played. */
+  private finish(s: GameState) {
+    const was = s.players.map((pl) => beaten(this.progress, pl.hero, s.scenario));
+    this.progress = recordResult(s, this.progress);
+    this.firstWins = s.players.filter((pl, i) => {
+      const now = beaten(this.progress, pl.hero, s.scenario);
+      return now && now !== was[i];
+    }).map((pl) => pl.hero);
+  }
+
+  reloadProgress() { this.progress = loadProgress(); for (const fn of this.listeners) fn(); }
 
   get canUndo() { return this.previous !== null; }
   undo() {
@@ -70,7 +88,7 @@ class Store {
     this.changed();
   }
 
-  quit() { this.state = null; this.previous = null; this.changed(); }
+  quit() { this.state = null; this.previous = null; this.firstWins = []; this.changed(); }
 
   flash(text: string) {
     this.error = text;

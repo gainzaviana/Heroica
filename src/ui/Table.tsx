@@ -5,7 +5,8 @@ import {
 } from "../engine/game";
 import type { ResType } from "../engine/types";
 import type { GameState } from "../engine/types";
-import { ENCOUNTER_CARDS, PLAYER_CARDS } from "../data/content";
+import { ENCOUNTER_CARDS, HEROES, PLAYER_CARDS, SCENARIOS } from "../data/content";
+import { beaten } from "./progress";
 import { store, useStore } from "./store";
 import { EncounterCard, PlayerCard, StatusChips } from "./Card";
 import { artUrl } from "./art";
@@ -472,8 +473,33 @@ function EndOverlay({ s }: { s: GameState }) {
         <div class="title big">{win ? "¡Victoria!" : "Derrota"}</div>
         <p>{s.resultText}</p>
         <p class="muted small">Ronda {s.round}.</p>
+        <EndProgress s={s} />
         <button class="act gold wide" onClick={() => store.quit()}>Nueva partida</button>
       </div>
+    </div>
+  );
+}
+
+/** What this game changed in each hero's progress, and which villains they still have to beat. */
+function EndProgress({ s }: { s: GameState }) {
+  const sc = SCENARIOS.find((x) => x.id === s.scenario);
+  return (
+    <div class="end-progress">
+      {s.players.map((pl) => {
+        const h = HEROES.find((x) => x.id === pl.hero);
+        if (!h) return null;
+        const first = store.firstWins.includes(pl.hero);
+        const pending = SCENARIOS.filter((x) => !beaten(store.progress, pl.hero, x.id));
+        return (
+          <div key={pl.hero} class="end-hero">
+            <div class="title small">{h.hero.name}</div>
+            {first && <div class="chip ready">🏆 {beaten(store.progress, pl.hero, s.scenario) === "experto" ? "Primera victoria en Experto" : "Primera victoria"} contra {sc?.villain.name}</div>}
+            <div class="small muted">
+              {pending.length ? <>Le queda por vencer: {pending.map((x) => x.villain.name).join(", ")}.</> : <>¡Ha vencido a todos los villanos!</>}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

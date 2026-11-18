@@ -804,3 +804,26 @@ describe("Aliados con habilidad", () => {
     expect(act(y.s, { a: "useCard", player: 0, card: zola })).toBe("Ya la usaste esta ronda.");
   });
 });
+
+describe("Progreso por héroe", () => {
+  it("cuenta victorias y derrotas por héroe, escenario y dificultad", async () => {
+    const { recordResult, beaten, tried } = await import("../ui/progress");
+    const s = newGame(SCENARIOS[0].id, [HEROES[0].id, HEROES[1].id], 1, "normal");
+    let p = {};
+    s.result = "derrota"; s.round = 5;
+    p = recordResult(s, p);
+    expect(tried(p, HEROES[0].id, SCENARIOS[0].id)).toBe(true);
+    expect(beaten(p, HEROES[0].id, SCENARIOS[0].id)).toBeUndefined();
+    s.result = "victoria"; s.round = 7;
+    p = recordResult(s, p);
+    s.round = 4;
+    p = recordResult(s, p);
+    expect(beaten(p, HEROES[1].id, SCENARIOS[0].id)).toBe("normal");
+    s.difficulty = "experto";
+    p = recordResult(s, p);
+    expect(beaten(p, HEROES[0].id, SCENARIOS[0].id)).toBe("experto");
+    expect(beaten(p, HEROES[0].id, SCENARIOS[1].id)).toBeUndefined();
+    const r = (p as never as Record<string, Record<string, Record<string, { wins: number; losses: number; bestRound: number }>>>)[HEROES[0].id][SCENARIOS[0].id].normal;
+    expect(r).toMatchObject({ wins: 2, losses: 1, bestRound: 4 });
+  });
+});
