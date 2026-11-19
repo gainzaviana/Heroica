@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { act, answer, canPlay, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats } from "../engine/game";
+import { act, answer, canPlay, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats, villainTraits } from "../engine/game";
 import type { GameState } from "../engine/types";
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, PLAYER_CARDS, SCENARIOS } from "../data/content";
 
@@ -52,6 +52,7 @@ function play(heroes: string[], seed: number, scenario = "asalto-arsenal") {
 /** Every card is in exactly one place. */
 function cardsAccounted(s: GameState): number {
   let n = s.encounterDeck.length + s.encounterDiscard.length + s.villain.attachments.length + s.plans.filter((p) => p.def !== "main").length;
+  n += Object.values(s.sideDecks ?? {}).reduce((a, d) => a + d.length, 0) + (s.setAside?.length ?? 0) + (s.environment ? 1 : 0) + (s.captives?.cards.length ?? 0);
   for (const p of s.players) n += p.deck.length + p.hand.length + p.discard.length + p.play.length + p.engaged.length + (p.nemesis?.length ?? 0);
   return n;
 }
@@ -825,5 +826,183 @@ describe("Progreso por héroe", () => {
     expect(beaten(p, HEROES[0].id, SCENARIOS[1].id)).toBeUndefined();
     const r = (p as never as Record<string, Record<string, Record<string, { wins: number; losses: number; bestRound: number }>>>)[HEROES[0].id][SCENARIOS[0].id].normal;
     expect(r).toMatchObject({ wins: 2, losses: 1, bestRound: 4 });
+  });
+});
+
+describe("Campaña: El Ascenso del Mariscal de Ceniza", () => {
+  function setup(scenario: string, hero = "vanguardia", form: "heroe" | "identidad" = "heroe", seed = 41) {
+    const s = newGame(scenario, [hero], seed);
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = form;
+    return { s, p };
+  }
+  /** Ends the turn and answers every prompt with its last option ("No" / "No defender"). */
+  const villainPhase = (s: GameState) => {
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    let g = 0;
+    while (s.prompt && g++ < 50) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+  };
+  const handOf = (s: GameState, pred: (d: ReturnType<typeof pcard>) => boolean, n: number) => {
+    const p = s.players[0];
+    const picks = p.deck.filter((u) => pred(pcard(s, u))).slice(0, n);
+    p.deck = p.deck.filter((u) => !picks.includes(u));
+    p.hand.push(...picks);
+    return picks;
+  };
+
+  it("Saeta Negra: starts with an experimental weapon that you remove by spending its resource type", () => {
+    const { s, p } = setup("saeta-negra");
+    expect(s.villain.attachments).toHaveLength(1);
+    expect(s.sideDecks!.armas).toHaveLength(4);
+    const w = s.villain.attachments[0];
+    const rm = ENCOUNTER_CARDS.get(s.cards[w])!.removal!;
+    const wrong = handOf(s, (d) => d.resType !== rm.res && d.resType !== "comodin", 3);
+    expect(act(s, { a: "removeAttachment", player: 0, attachment: w, pay: wrong })).toMatch(/Necesitas/);
+    const right = handOf(s, (d) => d.resType === rm.res, rm.cost);
+    expect(act(s, { a: "removeAttachment", player: 0, attachment: w, pay: right })).toBeUndefined();
+    expect(s.villain.attachments).toHaveLength(0);
+    expect(p.heroExhausted).toBe(false);
+    expect(s.sideDecks!.armas).toHaveLength(5); // back under the weapons deck
+  });
+
+  it("Keywords: Perforante removes Duro, A distancia ignores Represalia", () => {
+    const { s, p } = setup("saeta-negra", "soberano");
+    const cannon = Object.keys(s.cards).find((u) => s.cards[u] === "canon-laser")!;
+    s.sideDecks!.armas.push(...s.villain.attachments);
+    s.sideDecks!.armas = s.sideDecks!.armas.filter((u) => u !== cannon);
+    s.villain.attachments = [cannon];
+    p.tough = true;
+    // Coraza de Púas in play: Represalia that a ranged attacker ignores.
+    const spikes = Object.keys(s.cards).find((u) => s.cards[u] === "coraza-puas");
+    p.deck = p.deck.filter((u) => u !== spikes);
+    p.play.push({ uid: spikes!, def: "coraza-puas", exhausted: false, damage: 0 });
+    villainPhase(s);
+    expect(p.tough).toBe(false);
+    expect(p.damage).toBeGreaterThan(0);
+    expect(s.log.some((l) => l.text.includes("Perforante"))).toBe(true);
+    // A distancia (Saeta I): Coraza-like retaliation doesn't hit.
+    expect(s.log.some((l) => l.text.includes("Represalia:"))).toBe(false);
+    expect(s.log.some((l) => l.text.includes("a distancia"))).toBe(true);
+  });
+
+  it("Arrollador: damage beyond a blocking ally's life reaches the hero", () => {
+    const { s, p } = setup("saeta-negra", "soberano");
+    const gloves = Object.keys(s.cards).find((u) => s.cards[u] === "guanteletes-sismicos")!;
+    s.sideDecks!.armas.push(...s.villain.attachments);
+    s.sideDecks!.armas = s.sideDecks!.armas.filter((u) => u !== gloves);
+    s.villain.attachments = [gloves];
+    const squire = p.deck.find((u) => s.cards[u] === "escudero-fiel")!;
+    p.deck = p.deck.filter((u) => u !== squire);
+    p.play.push({ uid: squire, def: "escudero-fiel", exhausted: false, damage: 2 }); // 1 life left
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    expect(s.prompt?.kind).toBe("defense");
+    answer(s, squire);
+    while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+    expect(s.log.some((l) => l.text.startsWith("Arrollador"))).toBe(true);
+    expect(p.damage).toBeGreaterThan(0);
+  });
+
+  it("Amalgama: absorbs an environment, its cards check the trait, and Retraso counters change it", () => {
+    const { s } = setup("amalgama", "vanguardia", "identidad");
+    expect(s.environment).toBeDefined();
+    const first = s.cards[s.environment!];
+    expect(villainTraits(s)).toHaveLength(1);
+    // Force Acero and check the bonus.
+    const steel = Object.keys(s.cards).find((u) => s.cards[u] === "fabrica-abandonada")!;
+    const base = villainStats(s).fuerza - (ENCOUNTER_CARDS.get(first)!.environment!.fuerza ?? 0);
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== steel); s.encounterDiscard = s.encounterDiscard.filter((u) => u !== steel);
+    if (s.environment !== steel) { s.encounterDiscard.push(s.environment!); s.environment = steel; }
+    expect(villainTraits(s)).toEqual(["Acero"]);
+    expect(villainStats(s).fuerza).toBe(base + 1);
+    for (let k = 0; k < 3 && !s.result; k++) villainPhase(s);
+    expect(s.cards[s.environment!]).not.toBe("fabrica-abandonada");
+    expect(s.log.some((l) => l.text.includes("contadores de Retraso"))).toBe(true);
+  });
+
+  it("Réplica: transforming into a hero hurts, and clearing the cell rescues the captured allies", () => {
+    const { s, p } = setup("replica", "vanguardia", "identidad");
+    expect(s.captives!.cards).toHaveLength(2);
+    act(s, { a: "flip", player: 0 });
+    expect(p.damage).toBe(1);
+    const cell = s.plans.find((x) => s.cards[x.uid] === "celda-contencion")!;
+    cell.threat = 1;
+    act(s, { a: "thwart", player: 0 });
+    if (s.prompt) answer(s, cell.uid);
+    expect(s.plans.some((x) => x.uid === cell.uid)).toBe(false);
+    expect(p.play.map((c) => c.def)).toEqual(expect.arrayContaining(["sargento-brisa", "hermano-cobalto"]));
+    expect(s.rescued).toHaveLength(2);
+  });
+
+  it("Doctor Quimera: Pruebas counters release a Mutant, and Represalia hurts whoever attacks it", () => {
+    const { s, p } = setup("quimera", "vanguardia", "identidad");
+    s.planCounters = 3;
+    s.encounterDeck = s.encounterDeck.filter((u) => ENCOUNTER_CARDS.get(s.cards[u])!.type !== "esbirro" || ENCOUNTER_CARDS.get(s.cards[u])!.traits?.includes("mutante"));
+    villainPhase(s);
+    const mutants = p.engaged.filter((m) => ENCOUNTER_CARDS.get(m.def)!.traits?.includes("mutante"));
+    expect(mutants.length).toBeGreaterThan(0);
+    // A Mutante de Laboratorio hits back when the hero attacks it.
+    const lab = Object.keys(s.cards).find((u) => s.cards[u] === "mutante-laboratorio" && !p.engaged.some((m) => m.uid === u))!;
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== lab); s.encounterDiscard = s.encounterDiscard.filter((u) => u !== lab);
+    p.engaged.push({ uid: lab, def: "mutante-laboratorio", damage: 0 });
+    p.form = "heroe"; p.heroExhausted = false; p.damage = 0; p.stunned = false;
+    act(s, { a: "attack", player: 0 });
+    if (s.prompt) answer(s, lab);
+    expect(p.damage).toBe(1);
+  });
+
+  it("Mariscal: side-plan deck, Crisis blocks the main plan, Peligro deals more, the colossus wakes up", () => {
+    const { s, p } = setup("mariscal", "vanguardia", "identidad");
+    expect(s.plans.some((x) => s.cards[x.uid] === "coloso-dormido")).toBe(true);
+    expect(s.plans.filter((x) => x.def !== "main")).toHaveLength(2);
+    // Crisis.
+    const camps = s.sideDecks!.planes.find((u) => s.cards[u] === "campos-internamiento");
+    if (camps) { s.sideDecks!.planes = s.sideDecks!.planes.filter((u) => u !== camps); s.plans.push({ uid: camps, def: "campos-internamiento", threat: 3 }); }
+    mainPlan(s).threat = 3;
+    p.form = "heroe";
+    act(s, { a: "thwart", player: 0 });
+    if (s.prompt) expect(s.prompt.options.some((o) => o.id === "main")).toBe(false);
+    while (s.prompt) answer(s, s.prompt.options[0].id);
+    expect(mainPlan(s).threat).toBe(3);
+    // The colossus wakes up when its plan completes.
+    const col = s.plans.find((x) => s.cards[x.uid] === "coloso-dormido")!;
+    col.threat = 6;
+    p.form = "identidad";
+    villainPhase(s);
+    expect(s.players[0].engaged.some((m) => m.def === "coloso-despierto")).toBe(true);
+  });
+
+  it("Campaign: wounds, rewards, rescued allies and conditions carry into the next mission", async () => {
+    const { newCampaign, applyResult, chooseReward, setupFor, missionScenario } = await import("../ui/campaign");
+    const c = newCampaign("ceniza", ["vanguardia"], "normal");
+    expect(missionScenario(c)).toBe("saeta-negra");
+    const s = newGame("saeta-negra", ["vanguardia"], 5, "normal", setupFor(c));
+    s.players[0].damage = 5;
+    s.result = "victoria";
+    const lines = applyResult(c, s);
+    expect(c.step).toBe(1);
+    expect(c.wounds.vanguardia).toBe(2);
+    expect(c.conditions).toContain("arsenal-legion"); // the starting weapon was still on
+    expect(c.pendingReward?.options).toEqual(["arma-confiscada", "blindaje-recuperado"]);
+    expect(lines.length).toBeGreaterThan(1);
+    chooseReward(c, "vanguardia", "blindaje-recuperado");
+    expect(c.pendingReward).toBeUndefined();
+    const next = newGame(missionScenario(c), ["vanguardia"], 6, "normal", setupFor(c));
+    expect(next.scenario).toBe("amalgama");
+    expect(next.players[0].damage).toBe(2);
+    expect(Object.values(next.cards)).toContain("blindaje-recuperado");
+    expect(Object.values(next.cards)).toContain("prototipo-robado");
+    expect(next.campaign).toEqual({ id: "ceniza", step: 1 });
+    // A defeat doesn't advance.
+    next.result = "derrota";
+    applyResult(c, next);
+    expect(c.step).toBe(1);
+    // Rescued allies join the rescuer's deck.
+    const r = newGame("replica", ["vanguardia"], 7, "normal", setupFor({ ...c, step: 2 }));
+    r.rescued = [{ uid: r.captives!.cards[0], player: 0 }];
+    r.result = "victoria";
+    const c2 = { ...c, step: 2, boons: { vanguardia: [...c.boons.vanguardia] } };
+    applyResult(c2, r);
+    expect(c2.boons.vanguardia).toContain("sargento-brisa");
   });
 });

@@ -2,6 +2,7 @@ import { useEffect, useState } from "preact/hooks";
 import { act, answer, newGame, type Action } from "../engine/game";
 import type { GameState } from "../engine/types";
 import { beaten, loadProgress, recordResult, type Progress } from "./progress";
+import { applyResult, campaignById, CAMPAIGNS, chooseReward, loadCampaign, missionScenario, newCampaign, saveCampaign, setupFor } from "./campaign";
 
 const KEY = "heroica.partida";
 
@@ -19,6 +20,9 @@ class Store {
   /** Saved campaign progress, and the heroes that beat this scenario for the first time in this game. */
   progress: Progress = loadProgress();
   firstWins: string[] = [];
+  /** Saved campaigns, and what the last campaign mission changed (for the end screen). */
+  campaigns = Object.fromEntries(CAMPAIGNS.map((c) => [c.id, loadCampaign(c.id)]));
+  campaignLines: string[] = [];
   error?: string;
   private listeners = new Set<() => void>();
   private errorTimer?: ReturnType<typeof setTimeout>;
@@ -33,7 +37,38 @@ class Store {
     this.state = newGame(scenario, heroes, undefined, difficulty);
     this.previous = null;
     this.firstWins = [];
+    this.campaignLines = [];
     this.changed();
+  }
+
+  /** Campaign mode: start a new campaign (replacing any in progress) or play its next mission. */
+  startCampaign(id: string, heroes: string[], difficulty: "normal" | "experto") {
+    const saved = this.campaigns[id];
+    saved.active = newCampaign(id, heroes, difficulty);
+    saveCampaign(id, saved);
+    this.playMission(id);
+  }
+  playMission(id: string) {
+    const c = this.campaigns[id].active;
+    if (!c || c.pendingReward || c.step >= campaignById(id)!.scenarios.length) return;
+    this.state = newGame(missionScenario(c), c.heroes, undefined, c.difficulty, setupFor(c));
+    this.previous = null;
+    this.firstWins = [];
+    this.campaignLines = [];
+    this.changed();
+  }
+  abandonCampaign(id: string) {
+    const saved = this.campaigns[id];
+    saved.active = undefined;
+    saveCampaign(id, saved);
+    for (const fn of this.listeners) fn();
+  }
+  chooseReward(id: string, hero: string, card: string) {
+    const saved = this.campaigns[id];
+    if (!saved.active) return;
+    chooseReward(saved.active, hero, card);
+    saveCampaign(id, saved);
+    for (const fn of this.listeners) fn();
   }
 
   /** Runs a player action; returns the reason if it isn't allowed. */
@@ -76,6 +111,16 @@ class Store {
       const now = beaten(this.progress, pl.hero, s.scenario);
       return now && now !== was[i];
     }).map((pl) => pl.hero);
+    // Campaign mission: carry its consequences (only once, and only for the mission in progress).
+    const cs = s.campaign;
+    const saved = cs && this.campaigns[cs.id];
+    if (saved?.active && saved.active.step === cs!.step) {
+      this.campaignLines = applyResult(saved.active, s);
+      const n = campaignById(cs!.id)!.scenarios.length;
+      saved.unlocked = Math.max(saved.unlocked, Math.min(n - 1, saved.active.step));
+      if (saved.active.step >= n) saved.completed++;
+      saveCampaign(cs!.id, saved);
+    }
   }
 
   reloadProgress() { this.progress = loadProgress(); for (const fn of this.listeners) fn(); }
@@ -88,7 +133,7 @@ class Store {
     this.changed();
   }
 
-  quit() { this.state = null; this.previous = null; this.firstWins = []; this.changed(); }
+  quit() { this.state = null; this.previous = null; this.firstWins = []; this.campaignLines = []; this.changed(); }
 
   flash(text: string) {
     this.error = text;

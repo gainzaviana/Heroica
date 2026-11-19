@@ -36,6 +36,19 @@ guarda en el propio dispositivo después de cada acción.
     activación, empieza con un plan secundario en juego y su plan principal tiene 2 fases.
   - *El Enjambre* contra **Nexo, la IA Rebelde** (+ *Bajo Asedio*): convierte cartas de tu mazo en Drones, gana Fuerza
     por cada uno y su plan principal tiene 3 fases.
+- **Campañas:** la home agrupa los escenarios en packs. *Caja Básica* tiene los tres anteriores. *El Ascenso del Mariscal
+  de Ceniza* son 5 misiones enlazadas contra la Legión de Ceniza (modulares *Asalto de la Legión*, *Patrulla de la Legión*
+  y *Maestro de Armas*):
+  1. *Asalto al Laboratorio* — **Saeta Negra**: mazo aparte de armas experimentales que se quitan gastando recursos;
+     Perforante, Arrollador, A distancia; plan principal de 3 fases.
+  2. *Nadie Pasará* — **Amalgama**: absorbe el entorno en juego (Piedra, Acero, Hielo, Madera) y sus cartas lo leen;
+     contadores de Retraso.
+  3. *El Imitador* — **Réplica**: te hace daño cada vez que te transformas en héroe; dos aliados capturados que rescatas
+     frustrando la Celda de Contención.
+  4. *La Isla del Doctor Quimera* — **Doctor Quimera**: contadores de Pruebas que liberan esbirros Mutantes (Represalia, Duro).
+  5. *El Mariscal de Ceniza* — mazo de planes secundarios (Crisis, Peligro) y El Coloso Dormido, que despierta.
+  En modo campaña se guardan heridas, recompensas, aliados rescatados y condiciones (`localStorage`); las misiones se
+  desbloquean para jugarlas sueltas al avanzar.
 - **Reglas:** recursos por tipo (⚡ Energía, 🧠 Mental, ✊ Físico, 🌟 Comodín), estados (Aturdido, Confundido, Duro),
   fase del villano paso a paso con sus cartas de refuerzo, y deshacer de un solo paso.
 - **Arte:** las cartas básicas tienen ilustración 3D (toon) en `src/assets/art/*.webp`; el resto muestra su símbolo hasta

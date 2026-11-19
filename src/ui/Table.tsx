@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import {
-  abilitiesOf, allyCards, allyStats, canPlay, ecard, enemiesFor, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
+  abilitiesOf, allyCards, allyStats, attackerKeywords, canPlay, crisisActive, currentStage, ecard, enemiesFor, environmentDef, KEYWORD_NAME, resMatches, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
   planLimit, planName, RES_ICON, resourcesOf, resourceSources, scenarioOf, stageList, villainStats,
 } from "../engine/game";
 import type { ResType } from "../engine/types";
@@ -22,6 +22,7 @@ type Sheet =
   | { k: "pay"; uid: string; pay: string[]; extra: string[] }
   | { k: "end"; discard: string[] }
   | { k: "enc"; def: string; damage?: number }
+  | { k: "remove"; uid: string; pay: string[] }
   | { k: "ally"; uid: string }
   | { k: "log" }
   | { k: "rules" }
@@ -58,7 +59,7 @@ export function Table() {
         </div>
       </header>
 
-      <VillainPanel s={s} viewing={viewing} canAct={mine} onEncounter={(def, damage) => setSheet({ k: "enc", def, damage })} />
+      <VillainPanel s={s} viewing={viewing} canAct={mine} onEncounter={(def, damage) => setSheet({ k: "enc", def, damage })} onRemove={(uid) => setSheet({ k: "remove", uid, pay: [] })} />
 
       <section class="side">
         {s.players.length > 1 && (
@@ -92,24 +93,38 @@ export function Table() {
 
 // MARK: Villain side
 
-function VillainPanel({ s, viewing, canAct, onEncounter }: { s: GameState; viewing: number; canAct: boolean; onEncounter: (def: string, damage?: number) => void }) {
+function VillainPanel({ s, viewing, canAct, onEncounter, onRemove }: { s: GameState; viewing: number; canAct: boolean; onEncounter: (def: string, damage?: number) => void; onRemove: (uid: string) => void }) {
   const sc = scenarioOf(s);
   const v = villainStats(s);
   const plan = mainPlan(s);
   const limit = planLimit(s);
   const p = s.players[viewing];
+  const env = environmentDef(s);
   return (
     <section class="villain-side">
       <div class="villain panel">
         <Portrait artKey={`villain-${sc.id}`} glyph={sc.villain.glyph} />
         <div class="grow">
-          <div class="kicker">Villano · fase {s.villain.stage + 1} de {stageList(s).length}</div>
+          <div class="kicker">{s.campaign ? `Campaña · misión ${s.campaign.step + 1} · ` : ""}Villano · fase {s.villain.stage + 1} de {stageList(s).length}</div>
           <div class="title">{v.name}</div>
           <Meter value={v.vidaMax - s.villain.damage} max={v.vidaMax} kind="hp" label="Vida" />
           <div class="statline"><span>⚔ Fuerza {v.fuerza}</span><span>☾ Plan {v.plan}</span><StatusChips st={s.villain} /></div>
+          {(attackerKeywords(s, "villain").length > 0 || env) && (
+            <div class="kw-line">
+              {env && <span class="chip trait">🧱 {env.environment!.trait}</span>}
+              {attackerKeywords(s, "villain").map((k) => <span key={k} class="chip kw" title={KEYWORD_HELP[k]}>{KEYWORD_NAME[k]}</span>)}
+            </div>
+          )}
           {v.text && <div class="muted small">{v.text}</div>}
         </div>
       </div>
+      {env && (
+        <button class="panel env" onClick={() => onEncounter(env.id)}>
+          <div class="kicker">Entorno absorbido</div>
+          <div class="title">{env.glyph} {env.name}</div>
+          <div class="muted small">{env.text}</div>
+        </button>
+      )}
       {s.villain.attachments.length > 0 && (
         <div class="panel">
           <div class="kicker">Vínculos del villano</div>
@@ -117,11 +132,18 @@ function VillainPanel({ s, viewing, canAct, onEncounter }: { s: GameState; viewi
             const d = ecard(s, uid);
             return (
               <div class="row" key={uid}>
-                <button class="linkish grow" onClick={() => onEncounter(d.id)}>{d.glyph} {d.name}</button>
-                {canAct && p.form === "heroe" && !p.heroExhausted && <button class="small-btn" onClick={() => store.act({ a: "removeAttachment", player: viewing, attachment: uid })}>Arrancar</button>}
+                <button class="linkish grow" onClick={() => onEncounter(d.id)}>{d.glyph} {d.name}{d.traits?.includes("arma") ? " · arma" : ""}</button>
+                {canAct && p.form === "heroe" && d.removal && <button class="small-btn" onClick={() => onRemove(uid)}>Quitar ({RES_ICON[d.removal.res].repeat(d.removal.cost)})</button>}
+                {canAct && p.form === "heroe" && !d.removal && !p.heroExhausted && <button class="small-btn" onClick={() => store.act({ a: "removeAttachment", player: viewing, attachment: uid })}>Arrancar</button>}
               </div>
             );
           })}
+        </div>
+      )}
+      {s.sideDecks && (
+        <div class="decks muted small">
+          {s.sideDecks.armas && <>🔫 Armas experimentales por salir: {s.sideDecks.armas.length}. </>}
+          {s.sideDecks.planes && <>📜 Mazo de planes secundarios: {s.sideDecks.planes.length}.</>}
         </div>
       )}
       <div class="panel plan">
@@ -129,19 +151,39 @@ function VillainPanel({ s, viewing, canAct, onEncounter }: { s: GameState; viewi
         <div class="title">{mainPlanDef(s).name}</div>
         <Meter value={plan.threat} max={limit} kind="threat" label="Amenaza" />
         <div class="muted small">{mainPlanDef(s).text} Avanza {mainPlanDef(s).aceleracionPorJugador * s.players.length} por ronda.</div>
+        {sc.counters && (
+          <div class="counter-line" title={sc.counters.text}>
+            <span class="chip counters">{sc.counters.name}: {s.planCounters ?? 0} / {sc.counters.threshold}</span>
+            <span class="muted small"> +{sc.counters.perRound} al final de cada fase del villano. Al llegar: {sc.counters.text}</span>
+          </div>
+        )}
+        {crisisActive(s) && <div class="hint">Crisis: no puedes retirar amenaza de este plan hasta frustrar el plan con Crisis.</div>}
       </div>
       {s.plans.filter((x) => x.def !== "main").map((x) => {
         const d = ecard(s, x.uid);
         return (
           <button class="panel plan side-plan" key={x.uid} onClick={() => onEncounter(d.id)}>
-            <div class="kicker">Plan secundario{d.sidePlan?.aceleracion ? " · Aceleración" : ""}</div>
-            <div class="row"><span class="title grow">{d.glyph} {planName(s, x)}</span><span class="threat-chip">{x.threat}</span></div>
+            <div class="kicker">Plan secundario{planTags(d).map((k) => ` · ${k}`).join("")}</div>
+            <div class="row"><span class="title grow">{d.glyph} {planName(s, x)}</span><span class="threat-chip">{x.threat}{d.sidePlan?.completeAt ? ` / ${d.sidePlan.completeAt * s.players.length}` : ""}</span></div>
+            {s.captives?.plan === x.uid && s.captives.cards.length > 0 && <div class="small captives">🔒 Capturados: {s.captives.cards.map((u) => pcard(s, u).name).join(", ")}. Frústralo para rescatarlos.</div>}
           </button>
         );
       })}
       <div class="decks muted small">Mazo de encuentros: {s.encounterDeck.length} · descarte: {s.encounterDiscard.length}</div>
     </section>
   );
+}
+
+const KEYWORD_HELP: Record<string, string> = {
+  perforante: "Perforante: quita Duro al defensor antes del daño.",
+  arrollador: "Arrollador: si bloquea un aliado, el daño que sobre pasa a tu héroe.",
+  distancia: "A distancia: la Represalia no le alcanza.",
+};
+
+/** A side plan's icons. */
+function planTags(d: { sidePlan?: { aceleracion?: boolean; crisis?: boolean; peligro?: boolean; grows?: number } }): string[] {
+  const sp = d.sidePlan;
+  return [sp?.aceleracion && "Aceleración", sp?.crisis && "Crisis", sp?.peligro && "Peligro", sp?.grows && "Crece"].filter(Boolean) as string[];
 }
 
 function Meter({ value, max, kind, label }: { value: number; max: number; kind: "hp" | "threat"; label: string }) {
@@ -186,7 +228,7 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           {!hero && <button class="act green" disabled={p.heroExhausted || p.damage === 0} onClick={() => store.act({ a: "recover", player: i })}>Recuperar ({h.identity.recuperacion})</button>}
           {hero && ability?.timing === "action" && <button class="act gold" disabled={p.heroAbilityUsed} onClick={() => store.act({ a: "heroAbility", player: i })}>{ability.text}</button>}
           {!hero && h.identityAbility && <button class="act gold" disabled={!!p.identityAbilityUsed} onClick={() => store.act({ a: "identityAbility", player: i })}>{h.identityAbility.text}</button>}
-          <button class="act ghost" disabled={p.flippedThisTurn} onClick={() => store.act({ a: "flip", player: i })}>{hero ? `Volver a ${h.identity.name}` : `Transformarse en ${h.hero.name}`}</button>
+          <button class="act ghost" disabled={p.flippedThisTurn} onClick={() => store.act({ a: "flip", player: i })}>{hero ? `Volver a ${h.identity.name}` : `Transformarse en ${h.hero.name}`}{!hero && currentStage(s).flipPunish ? ` (−${currentStage(s).flipPunish} vida)` : ""}</button>
         </div>
       )}
       {guarded && canAct && <div class="hint">Un esbirro con Guardia te bloquea: derrótalo antes de atacar al villano.</div>}
@@ -303,6 +345,27 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
           </div>
           <button class="act gold wide" onClick={() => { if (!store.act({ a: "endTurn", player: viewing, discard: sheet.discard })) close(); }}>Terminar turno{draw ? ` y robar ${draw}` : ""}</button>
           <button class="act ghost wide" onClick={close}>Seguir jugando</button>
+        </Modal>
+      );
+    }
+    case "remove": {
+      const d = s.villain.attachments.includes(sheet.uid) ? ecard(s, sheet.uid) : undefined;
+      if (!d?.removal) { close(); return null; }
+      const rm = d.removal;
+      const got = sheet.pay.reduce((a, u) => a + (resMatches(pcard(s, u).resType, rm.res) ? pcard(s, u).resources : 0), 0);
+      const toggle = (u: string) => set({ ...sheet, pay: sheet.pay.includes(u) ? sheet.pay.filter((x) => x !== u) : [...sheet.pay, u] });
+      const usable = p.hand.filter((u) => resMatches(pcard(s, u).resType, rm.res));
+      return (
+        <Modal onClose={close}>
+          <div class="center"><EncounterCard def={d} size="md" /></div>
+          <div class="title">Quitar {d.name}: descarta cartas con {RES_ICON[rm.res]} por {rm.cost} · llevas {got}</div>
+          <div class="muted small">Solo cuentan los recursos de tipo {RES_ICON[rm.res]} (🌟 cuenta como cualquiera). No agota a tu héroe.</div>
+          <div class="cards wrap">
+            {usable.length === 0 && <div class="empty">No tienes cartas con {RES_ICON[rm.res]} en la mano.</div>}
+            {usable.map((u) => <PlayerCard key={u} def={pcard(s, u)} size="sm" selected={sheet.pay.includes(u)} onClick={() => toggle(u)} />)}
+          </div>
+          <button class="act gold wide" disabled={got < rm.cost} onClick={() => { if (!store.act({ a: "removeAttachment", player: viewing, attachment: sheet.uid, pay: sheet.pay })) close(); }}>Pagar y quitar</button>
+          <button class="act ghost wide" onClick={close}>Cancelar</button>
         </Modal>
       );
     }
@@ -473,8 +536,14 @@ function EndOverlay({ s }: { s: GameState }) {
         <div class="title big">{win ? "¡Victoria!" : "Derrota"}</div>
         <p>{s.resultText}</p>
         <p class="muted small">Ronda {s.round}.</p>
+        {store.campaignLines.length > 0 && (
+          <div class="end-campaign">
+            <div class="kicker">Campaña</div>
+            <ul class="small">{store.campaignLines.map((l, k) => <li key={k}>{l}</li>)}</ul>
+          </div>
+        )}
         <EndProgress s={s} />
-        <button class="act gold wide" onClick={() => store.quit()}>Nueva partida</button>
+        <button class="act gold wide" onClick={() => store.quit()}>{s.campaign ? "Volver a la campaña" : "Nueva partida"}</button>
       </div>
     </div>
   );
@@ -535,6 +604,9 @@ export function Rules() {
       <p><b>Estados</b> (héroes, aliados, villano y esbirros; nunca dos iguales a la vez): 💫 <b>Aturdido</b> cancela su próximo ataque básico; 🌀 <b>Confundido</b> cancela su próximo contener (o tramar, si es un enemigo); 🛡️ <b>Duro</b> anula el próximo daño que reciba. Cada estado se descarta al usarse.</p>
       <p><b>Aéreo:</b> rasgo que dan algunas mejoras; otras cartas lo aprovechan. <b>Némesis:</b> cada héroe puede tener un enemigo personal apartado; cuando una carta lo llama, su esbirro se enfrenta a ti y su plan entra en juego. <b>Obligación:</b> carta personal del héroe que se baraja en los encuentros y siempre la resuelve su dueño.</p>
       <p><b>A dos manos:</b> controlas dos héroes; juegan por turnos y el primer jugador cambia cada ronda.</p>
+      <p><b>Palabras clave:</b> <b>Perforante</b> quita Duro al defensor antes del daño; <b>Arrollador</b>: si bloquea un aliado, el daño sobrante pasa a tu héroe; <b>A distancia</b>: la Represalia no le alcanza. <b>Represalia</b> en un esbirro: si le atacas, recibes ese daño.</p>
+      <p><b>Planes secundarios:</b> <b>Crisis</b> impide retirar amenaza del plan principal; <b>Peligro</b> reparte una carta de encuentro más cada fase. <b>Armas experimentales</b> (Saeta Negra): un mazo aparte; quítalas gastando los recursos indicados. <b>Entornos</b> (Amalgama): el villano gana el rasgo del entorno en juego. <b>Contadores</b> del plan principal: al llegar al límite pasa algo malo.</p>
+      <p><b>Campaña:</b> juega las 5 misiones del Mariscal de Ceniza en orden con los mismos héroes. Entre misiones se guardan las heridas (la mitad del daño), una carta de recompensa por héroe, los aliados rescatados y las condiciones de cada final. Si pierdes, repites la misión.</p>
     </div>
   );
 }

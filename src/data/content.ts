@@ -1,5 +1,6 @@
 import type { EncounterCardDef, HeroDef, PlayerCardDef, ScenarioDef } from "../engine/types";
 import { LIDERAZGO, PROTECCION } from "./roster/aspects";
+import { CENIZA_CARDS, CENIZA_ENCOUNTERS, CENIZA_SCENARIOS, CENIZA_SETS } from "./roster/campana-ceniza";
 import { CENTELLA, CENTELLA_CARDS } from "./roster/centella";
 import { FUNAMBULA, FUNAMBULA_CARDS } from "./roster/funambula";
 import { MOLE, MOLE_CARDS } from "./roster/mole";
@@ -102,6 +103,7 @@ const cards: PlayerCardDef[] = [
   ...MOLE_CARDS,
   ...CENTELLA_CARDS,
   ...SOBERANO_CARDS,
+  ...CENIZA_CARDS,
 ];
 
 export const HEROES: HeroDef[] = [
@@ -175,6 +177,7 @@ const encounters: EncounterCardDef[] = [
   { id: "avance-oscuro", name: "Avance Oscuro", type: "traicion", boost: 2, glyph: "⇥", text: "Añade 2 amenaza al plan principal.", reveal: [{ do: "addThreat", target: "mainPlan", amount: 2 }] },
   { id: "emboscada", name: "Emboscada", type: "traicion", boost: 1, glyph: "⚔", text: "En forma de héroe recibes 1 daño; si no, añade 1 amenaza al plan principal.", reveal: [{ do: "heroDamage", amount: 1, ifIdentity: { do: "addThreat", amount: 1 } }] },
   ...SCENARIO_ENCOUNTERS,
+  ...CENIZA_ENCOUNTERS,
 ];
 
 export const ENCOUNTER_SETS: Record<string, string[]> = {
@@ -183,6 +186,7 @@ export const ENCOUNTER_SETS: Record<string, string[]> = {
   "experto-titan": ["carga-brutal", "bramido", "mercenario-veterano"],
   estandar: ["avance-oscuro", "emboscada"],
   ...SCENARIO_SETS,
+  ...CENIZA_SETS,
 };
 
 export const SCENARIOS: ScenarioDef[] = [
@@ -205,7 +209,15 @@ export const SCENARIOS: ScenarioDef[] = [
     expertSets: ["experto-titan"],
   },
   ...NEW_SCENARIOS,
+  ...CENIZA_SCENARIOS,
 ];
+
+/** Campaign packs on the home screen, in order. */
+export const PACKS: { id: string; name: string; intro: string; campaign?: boolean }[] = [
+  { id: "basica", name: "Caja Básica", intro: "Los tres primeros villanos de Aurelia. Juégalos en orden o por separado." },
+  { id: "ceniza", name: "El Ascenso del Mariscal de Ceniza", intro: "Cinco misiones enlazadas contra la Legión de Ceniza. En modo campaña, el daño, las recompensas, los aliados rescatados y las consecuencias pasan de una misión a la siguiente.", campaign: true },
+];
+export const packOf = (sc: ScenarioDef) => sc.pack ?? "basica";
 
 export const PLAYER_CARDS = new Map(cards.map((c) => [c.id, c]));
 export const ENCOUNTER_CARDS = new Map(encounters.map((c) => [c.id, c]));

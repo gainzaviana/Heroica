@@ -84,7 +84,21 @@ export type Effect =
    *  the one you choose as primary gets +primaryBonus to its first amount. */
   | { do: "triggerAll"; trait: string; primaryBonus: number }
   | { do: "drone"; amount: number } // the top cards of your deck come into play face down as Drones engaged with you
-  | { do: "discardUpgrade" }; // discard one of your upgrades (the most expensive)
+  | { do: "discardUpgrade" } // discard one of your upgrades (the most expensive)
+  // Campaign villains
+  | { do: "ifTrait"; trait: string; effects: Effect[]; else?: Effect[] } // only if the villain has this trait (from the environment)
+  | { do: "armWeapon" } // the top card of the weapons deck attaches to the villain; if it is empty, surge
+  | { do: "nextSidePlan"; ifFewer?: number } // the top card of the side-plan deck comes into play (only if fewer than ifFewer side plans)
+  | { do: "spawnTrait"; trait: string } // discard encounter cards until a minion with this trait appears; it engages you
+  | { do: "spawn"; card: string } // a set-aside card comes into play (a minion engages you; a plan enters play)
+  | { do: "planCounter"; amount: number } // counters on the main plan (Retraso, Pruebas…)
+  | { do: "healVillain"; amount: number }
+  | { do: "newEnvironment" } // the villain absorbs a different environment (searched from the encounter deck, then the discard)
+  | { do: "minionsActivate" }; // every minion engaged with you activates again
+
+/** Combat keywords. Perforante: removes Duro before damage. Arrollador: damage beyond a blocking
+ *  ally's life goes to the hero. A distancia: Represalia doesn't hit it. */
+export type Keyword = "perforante" | "arrollador" | "distancia";
 
 /** When a card's ability can be used. */
 export type Timing =
@@ -107,7 +121,7 @@ export interface Ability {
 // MARK: Cards
 
 export type PlayerCardType = "aliado" | "mejora" | "apoyo" | "evento" | "recurso";
-export type EncounterCardType = "esbirro" | "traicion" | "plan" | "vinculo" | "obligacion";
+export type EncounterCardType = "esbirro" | "traicion" | "plan" | "vinculo" | "obligacion" | "entorno";
 
 export interface Stats { fuerza?: number; ingenio?: number; aguante?: number }
 
@@ -161,8 +175,27 @@ export interface EncounterCardDef {
   flavor?: string;
   /** Extra attack or scheme it adds when flipped as a boost. */
   boost: number;
-  minion?: { vida: number; fuerza: number; plan: number; guardia?: boolean };
-  sidePlan?: { amenaza: number; aceleracion?: boolean };
+  minion?: { vida: number; fuerza: number; plan: number; guardia?: boolean; retaliate?: number; keywords?: Keyword[] };
+  sidePlan?: {
+    amenaza: number; aceleracion?: boolean;
+    /** Crisis: you can't remove threat from the main plan while it's in play. */
+    crisis?: boolean;
+    /** Peligro: one more encounter card is dealt each villain phase while it's in play. */
+    peligro?: boolean;
+    /** Gains this much threat at the start of each villain phase. */
+    grows?: number;
+    /** When its threat reaches this (× players), it is discarded and `onComplete` happens. */
+    completeAt?: number;
+    onComplete?: Effect[];
+  };
+  /** Traits other cards look for ("legion", "mutante", "arma"). */
+  traits?: string[];
+  /** Attachments: combat keywords they give the villain. */
+  keywords?: Keyword[];
+  /** Attachments: instead of exhausting your hero, pay this many resources of this type to discard it. */
+  removal?: { cost: number; res: ResType };
+  /** Environments: the villain absorbs its material (one environment at a time). */
+  environment?: { trait: string; fuerza?: number; plan?: number; keywords?: Keyword[]; afterAttack?: Effect[]; afterScheme?: Effect[] };
   /** Treachery effects, or minion/plan effects when revealed. */
   reveal?: Effect[];
   /** Attachments and side plans: added to the villain's stats while in play. */
@@ -219,6 +252,11 @@ export interface VillainStage {
   dronesOnAttack?: number;
   /** +Fuerza per Drone engaged with the hero it attacks. */
   fuerzaPorDron?: number;
+  /** Reflejos: when a player turns into their hero, they take this much damage. */
+  flipPunish?: number;
+  keywords?: Keyword[];
+  /** When revealed: these effects too (against the first player). */
+  revealEffects?: Effect[];
 }
 
 export interface MainPlanDef { name: string; inicioPorJugador: number; aceleracionPorJugador: number; limitePorJugador: number; text: string }
@@ -241,6 +279,33 @@ export interface ScenarioDef {
   encounterSets: string[];
   /** Sets added in Expert mode (default: the shared "experto" set). */
   expertSets?: string[];
+  /** Separate decks (shuffled at setup): "armas" for armWeapon, "planes" for nextSidePlan. */
+  sideDecks?: Record<string, string[]>;
+  /** Cards set aside until a "spawn" effect brings them in. */
+  setAside?: string[];
+  /** Setup effects (against the first player), after side plans. */
+  setup?: Effect[];
+  /** Counters on the main plan: `perRound` at the end of each villain phase; at `threshold` they reset and `effects` happen. */
+  counters?: { name: string; perRound: number; threshold: number; effects: Effect[]; text: string };
+  /** At the start of each villain phase (against the first player). */
+  phaseStart?: Effect[];
+  /** Allies (player cards) held captive under this side plan; clearing it rescues them. */
+  captives?: { plan: string; allies: string[] };
+  /** Campaign this scenario belongs to (for the home screen). */
+  pack?: string;
+}
+
+/** Campaign changes applied when a scenario is set up. */
+export interface SetupOptions {
+  /** Extra player cards shuffled into each hero's deck (by hero id). */
+  extraCards?: Record<string, string[]>;
+  /** Damage each hero starts with (by hero id). */
+  startDamage?: Record<string, number>;
+  /** Extra encounter cards shuffled into the encounter deck. */
+  extraEncounter?: string[];
+  /** Extra threat on the main plan, per player. */
+  startThreat?: number;
+  campaign?: { id: string; step: number };
 }
 
 // MARK: State
@@ -323,6 +388,8 @@ export interface EffectCtx {
   /** The card acting (an ally or a card in play) and the name to show for combos. */
   source?: string;
   sourceName?: string;
+  /** A basic attack: "hero" or the attacking ally's uid (minions with Represalia hit back). */
+  basic?: string;
 }
 
 export interface GameState {
@@ -361,6 +428,16 @@ export interface GameState {
   result?: "victoria" | "derrota";
   resultText?: string;
   nextUid: number;
+  /** Side decks (weapons, side plans) and set-aside cards, as uids. */
+  sideDecks?: Record<string, string[]>;
+  setAside?: string[];
+  /** The environment in play (its uid) and the main plan counters. */
+  environment?: string;
+  planCounters?: number;
+  /** Captured allies (uids) under their side plan, and allies rescued this game (uid → player). */
+  captives?: { plan: string; cards: string[] };
+  rescued?: { uid: string; player: number }[];
+  campaign?: { id: string; step: number };
 }
 
 export type VillainStep =
@@ -369,6 +446,7 @@ export type VillainStep =
   | { s: "minionsActivate"; player: number }
   | { s: "deal" }
   | { s: "reveal"; player: number; card: string }
+  | { s: "counters" }
   | { s: "endRound" };
 
 /** One step of the villain phase: what happened and the cards involved (boosts, encounter cards). */

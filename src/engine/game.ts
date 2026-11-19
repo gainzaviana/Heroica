@@ -1,5 +1,5 @@
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HERO_BY_ID, PLAYER_CARDS, SCENARIO_BY_ID } from "../data/content";
-import type { Ability, CardInPlay, EncounterCardDef, Effect, EffectCtx, GameState, MainPlanDef, MinionState, PlanState, PlayerCardDef, PlayerState, Prompt, ResType, Resume, StatusKind, Statuses, Target, VillainStep } from "./types";
+import type { Ability, CardInPlay, EncounterCardDef, Effect, EffectCtx, GameState, Keyword, MainPlanDef, MinionState, PlanState, PlayerCardDef, PlayerState, Prompt, ResType, Resume, SetupOptions, StatusKind, Statuses, Target, VillainStep } from "./types";
 
 export const RES_ICON: Record<ResType, string> = { energia: "⚡", mental: "🧠", fisico: "✊", comodin: "🌟" };
 export const RES_NAME: Record<ResType, string> = { energia: "Energía", mental: "Mental", fisico: "Físico", comodin: "Comodín" };
@@ -114,12 +114,40 @@ export function villainStats(s: GameState) {
   let fuerza = st.fuerza, plan = st.plan, vida = 0;
   const bonusCards = [...s.villain.attachments, ...s.plans.filter((x) => x.def !== "main").map((x) => x.uid)];
   for (const a of bonusCards) { const b = ecard(s, a).villainBonus; fuerza += b?.fuerza ?? 0; plan += b?.plan ?? 0; vida += b?.vida ?? 0; }
+  const env = environmentDef(s)?.environment;
+  fuerza += env?.fuerza ?? 0; plan += env?.plan ?? 0;
   // Scenarios with their own expert stages don't get the generic bonus.
   const expert = s.difficulty === "experto" && !sc.villain.stagesFor;
   return { name: st.name, fuerza: fuerza + (expert ? 1 : 0), plan, vidaMax: (st.vidaPorJugador + (expert ? 2 : 0)) * playerCount(s) + vida, text: st.text };
 }
 
 export const currentStage = (s: GameState) => scenarioOf(s).villain.stages[stageList(s)[s.villain.stage]];
+
+/** The environment the villain has absorbed, if any. */
+export const environmentDef = (s: GameState) => (s.environment ? ecard(s, s.environment) : undefined);
+/** The villain's traits (from the environment it absorbed). */
+export const villainTraits = (s: GameState): string[] => { const t = environmentDef(s)?.environment?.trait; return t ? [t] : []; };
+/** Combat keywords of an attacker: the villain's come from its stage, attachments and environment. */
+export function attackerKeywords(s: GameState, attacker: string): Keyword[] {
+  if (attacker !== "villain") { const m = findMinion(s, attacker); return m ? (minionDef(m).minion?.keywords ?? []) : []; }
+  const out = new Set<Keyword>(currentStage(s).keywords ?? []);
+  for (const u of s.villain.attachments) for (const k of ecard(s, u).keywords ?? []) out.add(k);
+  for (const k of environmentDef(s)?.environment?.keywords ?? []) out.add(k);
+  return [...out];
+}
+export const KEYWORD_NAME: Record<Keyword, string> = { perforante: "Perforante", arrollador: "Arrollador", distancia: "A distancia" };
+/** A side plan with Crisis is in play: no threat can be removed from the main plan. */
+export const crisisActive = (s: GameState) => s.plans.some((x) => x.def !== "main" && ecard(s, x.uid).sidePlan?.crisis);
+
+/** Where an encounter card goes when it leaves play: side-deck cards go back under their deck. */
+function toDiscard(s: GameState, uid: string) {
+  const def = s.cards[uid];
+  const decks = scenarioOf(s).sideDecks ?? {};
+  for (const [k, ids] of Object.entries(decks)) {
+    if (ids.includes(def) && s.sideDecks?.[k]) { s.sideDecks[k].push(uid); return; }
+  }
+  s.encounterDiscard.push(uid);
+}
 
 /** A new villain stage comes into play: its "when revealed" effects. */
 function revealStage(s: GameState) {
@@ -130,7 +158,9 @@ function revealStage(s: GameState) {
     if (uid) { s.villain.attachments.push(uid); log(s, `${st.name} se equipa con ${ecard(s, uid).name}.`); }
   }
   if (st.onReveal?.tough) { s.villain.tough = true; log(s, `${st.name} obtiene Duro: el próximo daño que reciba se anula.`); }
+  if (st.revealEffects && s.players.length) runEffects(s, firstAlive(s), st.revealEffects);
 }
+const firstAlive = (s: GameState) => { const k = s.players.findIndex((p, i) => i >= s.first && !p.eliminated); return k >= 0 ? k : Math.max(0, s.players.findIndex((p) => !p.eliminated)); };
 
 /** Takes a card with this definition out of the encounter deck or discard (searching), if there is one. */
 function takeByDef(s: GameState, def: string): string | undefined {
@@ -152,7 +182,7 @@ export const planLimit = (s: GameState) => mainPlanDef(s).limitePorJugador * pla
 
 // MARK: Setup
 
-export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now() >>> 0, difficulty: "normal" | "experto" = "normal"): GameState {
+export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now() >>> 0, difficulty: "normal" | "experto" = "normal", opts: SetupOptions = {}): GameState {
   const sc = SCENARIO_BY_ID.get(scenarioID);
   if (!sc) throw new Error(`Escenario desconocido: ${scenarioID}`);
   const s: GameState = {
@@ -164,25 +194,40 @@ export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now()
   for (const id of heroIDs) {
     const h = HERO_BY_ID.get(id);
     if (!h) throw new Error(`Héroe desconocido: ${id}`);
-    const deck = shuffle(s, h.deck.map(mk));
-    const p: PlayerState = { hero: h.id, form: "identidad", heroExhausted: false, flippedThisTurn: false, heroAbilityUsed: false, damage: 0, stunned: false, deck, hand: [], discard: [], play: [], engaged: [], eliminated: false };
+    const deck = shuffle(s, [...h.deck, ...(opts.extraCards?.[id] ?? [])].map(mk));
+    const damage = Math.max(0, Math.min(h.vida - 1, opts.startDamage?.[id] ?? 0));
+    const p: PlayerState = { hero: h.id, form: "identidad", heroExhausted: false, flippedThisTurn: false, heroAbilityUsed: false, damage, stunned: false, deck, hand: [], discard: [], play: [], engaged: [], eliminated: false };
     if (h.nemesis) p.nemesis = h.nemesis.map(mk);
     if (h.setupToHand) { const k = p.deck.findIndex((u) => s.cards[u] === h.setupToHand); if (k >= 0) p.hand.push(...p.deck.splice(k, 1)); }
     s.players.push(p);
   }
   s.players.forEach((p, i) => drawCards(s, i, handSize(s, i) - p.hand.length));
-  s.plans.push({ uid: "main", def: "main", threat: sc.mainPlan.inicioPorJugador * s.players.length });
+  s.plans.push({ uid: "main", def: "main", threat: (sc.mainPlan.inicioPorJugador + (opts.startThreat ?? 0)) * s.players.length });
+  if (opts.campaign) s.campaign = opts.campaign;
   const sets = difficulty === "experto" ? [...sc.encounterSets, ...(sc.expertSets ?? ["experto"])] : sc.encounterSets;
-  const encounter = sets.flatMap((set) => ENCOUNTER_SETS[set]).map(mk);
+  const encounter = [...sets.flatMap((set) => ENCOUNTER_SETS[set]), ...(opts.extraEncounter ?? [])].map(mk);
   for (const p of s.players) { const ob = heroOf(p).obligation; if (ob) encounter.push(mk(ob)); }
   s.encounterDeck = shuffle(s, encounter);
+  if (sc.sideDecks) s.sideDecks = Object.fromEntries(Object.entries(sc.sideDecks).map(([k, ids]) => [k, shuffle(s, ids.map(mk))]));
+  if (sc.setAside) s.setAside = sc.setAside.map(mk);
   for (const id of sc.setupSidePlans ?? []) {
     const uid = takeByDef(s, id);
     if (uid) { s.plans.push({ uid, def: id, threat: ecard(s, uid).sidePlan!.amenaza }); log(s, `En juego desde el inicio: ${ecard(s, uid).name}.`); }
   }
+  if (sc.captives) {
+    const plan = s.plans.find((x) => s.cards[x.uid] === sc.captives!.plan);
+    if (plan) {
+      s.captives = { plan: plan.uid, cards: sc.captives.allies.map(mk) };
+      log(s, `Bajo ${ecard(s, plan.uid).name} hay aliados capturados: ${s.captives.cards.map((u) => pcard(s, u).name).join(", ")}. Frústralo para rescatarlos.`);
+    }
+  }
+  if (sc.setup) runEffects(s, 0, sc.setup);
+  s.prompt = null;
   revealStage(s);
   s.revealed = false;
   log(s, `${sc.villain.name} amenaza Aurelia. ${s.players.map((_, i) => heroOf(s.players[i]).hero.name).join(" y ")} acuden a la llamada.`);
+  for (const p of s.players) if (p.damage) log(s, `${heroOf(p).hero.name} arrastra ${p.damage} daño de la misión anterior.`);
+  s.villainQueue = [];
   return s;
 }
 
@@ -291,7 +336,7 @@ function damageEnemy(s: GameState, id: string, amount: number): { defeated: bool
 /** A defeated or removed minion leaves: Drones go back to their owner's discard. */
 function discardMinion(s: GameState, owner: number, m: MinionState) {
   if (m.drone) s.players[owner].discard.push(m.uid);
-  else s.encounterDiscard.push(m.uid);
+  else toDiscard(s, m.uid);
 }
 
 function countDefeat(s: GameState) {
@@ -348,17 +393,32 @@ function damageAlly(s: GameState, i: number, uid: string, amount: number) {
   }
 }
 
-function thwartPlan(s: GameState, uid: string, amount: number) {
+function thwartPlan(s: GameState, uid: string, amount: number, player = s.active) {
   const plan = s.plans.find((p) => p.uid === uid);
   if (!plan || amount <= 0) return;
+  if (plan.def === "main" && crisisActive(s)) { log(s, `Crisis: no puedes retirar amenaza de ${planName(s, plan)} mientras haya un plan con Crisis.`); return; }
   plan.threat = Math.max(0, plan.threat - amount);
   const name = planName(s, plan);
   log(s, `Retiras ${amount} amenaza de ${name}.`);
   if (plan.def !== "main" && plan.threat === 0) {
     s.plans = s.plans.filter((p) => p !== plan);
-    s.encounterDiscard.push(plan.uid);
+    toDiscard(s, plan.uid);
     log(s, `${name} queda frustrado.`);
+    if (s.captives?.plan === plan.uid) rescue(s, player);
   }
+}
+
+/** Clearing the captives' plan: each captured ally joins this player (in play if there's room, else to the hand). */
+function rescue(s: GameState, i: number) {
+  const p = s.players[i];
+  for (const uid of s.captives?.cards ?? []) {
+    const allies = p.play.filter((c) => pcard(s, c.uid).ally).length;
+    if (allies < 3) p.play.push({ uid, def: s.cards[uid], exhausted: false, damage: 0 });
+    else p.hand.push(uid);
+    (s.rescued ??= []).push({ uid, player: i });
+    log(s, `¡${pcard(s, uid).name} es rescatado y se une a ${heroName(s, i)}${allies < 3 ? "" : " (a tu mano)"}!`);
+  }
+  s.captives = { plan: "", cards: [] };
 }
 export const planName = (s: GameState, p: PlanState) => (p.def === "main" ? mainPlanDef(s).name : ecard(s, p.uid).name);
 
@@ -367,6 +427,31 @@ function addThreat(s: GameState, uid: string, amount: number) {
   if (!plan || amount <= 0) return;
   plan.threat += amount;
   log(s, `${planName(s, plan)} gana ${amount} amenaza.`);
+  const sp = plan.def !== "main" ? ecard(s, plan.uid).sidePlan : undefined;
+  if (sp?.completeAt && plan.threat >= sp.completeAt * playerCount(s)) {
+    s.plans = s.plans.filter((x) => x !== plan);
+    (s.setAside ??= []).push(plan.uid);
+    log(s, `¡${planName(s, plan)} se completa!`);
+    if (sp.onComplete) runEffects(s, firstAlive(s), sp.onComplete);
+  }
+}
+
+/** A side plan comes into play (with its "when revealed" effects). */
+function enterSidePlan(s: GameState, i: number, uid: string) {
+  const def = ecard(s, uid);
+  s.plans.push({ uid, def: def.id, threat: def.sidePlan!.amenaza });
+  const tags = [def.sidePlan?.crisis && "Crisis", def.sidePlan?.peligro && "Peligro", def.sidePlan?.aceleracion && "Aceleración"].filter(Boolean).join(", ");
+  log(s, `Entra en juego el plan secundario ${def.name} con ${def.sidePlan!.amenaza} amenaza${tags ? ` (${tags})` : ""}.`);
+  if (def.reveal) runEffects(s, i, def.reveal);
+}
+
+/** The villain absorbs an environment's material; the previous one is discarded. */
+function setEnvironment(s: GameState, uid: string) {
+  const old = s.environment;
+  if (old) toDiscard(s, old);
+  s.environment = uid;
+  const d = ecard(s, uid);
+  log(s, `${villainStats(s).name} absorbe ${d.name}: ahora es de ${d.environment?.trait ?? "nada"}.`);
 }
 
 // MARK: Effects
@@ -377,7 +462,7 @@ function optionsFor(s: GameState, i: number, t: Target, ctx?: EffectCtx): { id: 
     case "chooseMinion": return enemiesFor(s, i, false).filter((r) => r.kind === "minion").map((r) => ({ id: r.uid!, label: enemyName(s, r.uid!), detail: enemyDetail(s, r.uid!) }));
     case "villain": return [{ id: "villain", label: enemyName(s, "villain") }];
     case "attacker": return ctx?.attacker && (ctx.attacker === "villain" || refFromID(s, ctx.attacker)) ? [{ id: ctx.attacker, label: enemyName(s, ctx.attacker) }] : [];
-    case "choosePlan": return s.plans.map((p) => ({ id: p.uid, label: planName(s, p), detail: `${p.threat} amenaza` }));
+    case "choosePlan": return s.plans.filter((p) => !(p.def === "main" && crisisActive(s))).map((p) => ({ id: p.uid, label: planName(s, p), detail: `${p.threat} amenaza` }));
     case "mainPlan": return [{ id: "main", label: planName(s, mainPlan(s)) }];
     case "self": return [{ id: `hero:${i}`, label: heroName(s, i) }];
     case "lastTarget": return ctx?.lastTarget && (ctx.lastTarget === "villain" || refFromID(s, ctx.lastTarget)) ? [{ id: ctx.lastTarget, label: enemyName(s, ctx.lastTarget) }] : [];
@@ -503,8 +588,13 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
       if (!target) break;
       if (e.stun) giveStatus(s, target, "stunned");
       ctx.lastTarget = target;
+      const retaliate = ctx.basic && target !== "villain" ? ENCOUNTER_CARDS.get(s.cards[target])?.minion?.retaliate ?? 0 : 0;
       const r = damageEnemy(s, target, amount);
       ctx.killed = r.defeated;
+      if (retaliate && !s.result) {
+        log(s, `Represalia de ${ENCOUNTER_CARDS.get(s.cards[target])!.name}: ${retaliate} daño a quien le atacó.`);
+        if (ctx.basic === "hero") damageHero(s, i, retaliate); else damageAlly(s, i, ctx.basic!, retaliate);
+      }
       if (r.excess > 0 && e.overkillIfPaid && paidHas(ctx, e.overkillIfPaid) && target !== "villain" && !s.result) {
         log(s, `Arrollador: ${r.excess} daño sobrante pasa al villano.`);
         damageEnemy(s, "villain", r.excess);
@@ -513,8 +603,8 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
     }
     case "thwart": {
       const amount = e.amount + (e.paidBonus && paidHas(ctx, e.paidBonus.res) ? e.paidBonus.amount : 0) + (e.bonusIfDefeated && (p.defeatedThisTurn ?? 0) > 0 ? e.bonusIfDefeated : 0);
-      if (e.allIfTrait && traitCount(s, i, e.allIfTrait) > 0) { for (const plan of [...s.plans]) thwartPlan(s, plan.uid, amount); break; }
-      thwartPlan(s, target!, amount);
+      if (e.allIfTrait && traitCount(s, i, e.allIfTrait) > 0) { for (const plan of [...s.plans]) thwartPlan(s, plan.uid, amount, i); break; }
+      thwartPlan(s, target!, amount, i);
       break;
     }
     case "addThreat": addThreat(s, target!, e.amount); break;
@@ -620,12 +710,88 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
       log(s, `Entra en juego ${ecard(s, uid).name}.`);
       break;
     }
+    case "ifTrait": {
+      const has = villainTraits(s).includes(e.trait);
+      const fx = has ? e.effects : e.else;
+      if (fx) runEffects(s, i, fx, 0, ctx);
+      break;
+    }
+    case "armWeapon": {
+      const deck = s.sideDecks?.armas;
+      if (!deck?.length) { log(s, "No quedan armas experimentales: oleada."); surge(s, i); break; }
+      const uid = deck.shift()!;
+      s.villain.attachments.push(uid);
+      const d = ecard(s, uid);
+      log(s, `🔫 ${villainStats(s).name} se equipa con un arma experimental: ${d.name}.`);
+      s.phaseReport?.[s.phaseReport.length - 1]?.cards.push(d.id);
+      break;
+    }
+    case "nextSidePlan": {
+      const deck = s.sideDecks?.planes;
+      if (e.ifFewer !== undefined && s.plans.filter((x) => x.def !== "main").length >= e.ifFewer) break;
+      if (!deck?.length) { log(s, "El mazo de planes secundarios está vacío."); break; }
+      const uid = deck.shift()!;
+      s.phaseReport?.[s.phaseReport.length - 1]?.cards.push(s.cards[uid]);
+      enterSidePlan(s, i, uid);
+      break;
+    }
+    case "spawnTrait": {
+      const has = (u: string) => !!ecard(s, u).minion && !!ecard(s, u).traits?.includes(e.trait);
+      let found: string | undefined;
+      const discarded: string[] = [];
+      while (s.encounterDeck.length) {
+        const u = s.encounterDeck.shift()!;
+        s.revealed = true;
+        if (has(u)) { found = u; break; }
+        discarded.push(u);
+      }
+      s.encounterDiscard.push(...discarded);
+      if (discarded.length) log(s, `Se descartan ${discarded.map((u) => ecard(s, u).name).join(", ")}.`);
+      if (!found) { const k = s.encounterDiscard.findIndex(has); if (k >= 0) found = s.encounterDiscard.splice(k, 1)[0]; }
+      if (!found) { log(s, "No aparece ningún esbirro de ese tipo."); break; }
+      engageMinion(s, i, found);
+      break;
+    }
+    case "spawn": {
+      const k = (s.setAside ?? []).findIndex((u) => s.cards[u] === e.card);
+      if (k < 0) { log(s, "Ya está en juego."); break; }
+      const uid = s.setAside!.splice(k, 1)[0];
+      const d = ecard(s, uid);
+      if (d.type === "esbirro") engageMinion(s, i, uid);
+      else if (d.type === "plan") enterSidePlan(s, i, uid);
+      else s.encounterDiscard.push(uid);
+      break;
+    }
+    case "planCounter": {
+      const c = scenarioOf(s).counters;
+      s.planCounters = (s.planCounters ?? 0) + e.amount;
+      log(s, `El plan principal gana ${e.amount} contador${e.amount === 1 ? "" : "es"} de ${c?.name ?? "plan"} (${s.planCounters}${c ? ` de ${c.threshold}` : ""}).`);
+      break;
+    }
+    case "healVillain": {
+      const before = s.villain.damage;
+      s.villain.damage = Math.max(0, s.villain.damage - e.amount);
+      if (before > s.villain.damage) log(s, `${villainStats(s).name} se recupera ${before - s.villain.damage}.`);
+      break;
+    }
+    case "newEnvironment": {
+      const cur = s.environment ? s.cards[s.environment] : undefined;
+      const ok = (u: string) => ecard(s, u).type === "entorno" && s.cards[u] !== cur;
+      let k = s.encounterDeck.findIndex(ok);
+      let uid = k >= 0 ? s.encounterDeck.splice(k, 1)[0] : undefined;
+      if (!uid) { k = s.encounterDiscard.findIndex(ok); if (k >= 0) uid = s.encounterDiscard.splice(k, 1)[0]; }
+      if (!uid) { log(s, "No hay otro entorno que absorber."); break; }
+      s.phaseReport?.[s.phaseReport.length - 1]?.cards.push(s.cards[uid]);
+      setEnvironment(s, uid);
+      break;
+    }
+    case "minionsActivate": s.villainQueue.unshift({ s: "minionsActivate", player: i }); break;
     case "detonate": {
       const plan = s.plans.find((x) => x.def !== "main" && s.cards[x.uid] === e.plan);
       if (!plan) { log(s, "No hay nada que detone: oleada."); surge(s, i); break; }
       const dmg = plan.threat;
       s.plans = s.plans.filter((x) => x !== plan);
-      s.encounterDiscard.push(plan.uid);
+      toDiscard(s, plan.uid);
       log(s, `¡${ecard(s, plan.uid).name} estalla con ${dmg} de amenaza!`);
       damageHero(s, i, dmg);
       break;
@@ -769,7 +935,7 @@ export type Action =
   | { a: "heroAbility"; player: number }
   | { a: "identityAbility"; player: number }
   | { a: "flip"; player: number }
-  | { a: "removeAttachment"; player: number; attachment: string }
+  | { a: "removeAttachment"; player: number; attachment: string; pay?: string[] }
   | { a: "endTurn"; player: number; discard: string[] };
 
 /** What a player can do right now with a card in hand (for the interface). */
@@ -868,7 +1034,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (x.a === "thwart" && p.confused) { p.confused = false; log(s, `${heroLabel} está Confundido: no contiene nada (pierde Confundido).`); return; }
       if (x.a === "attack") {
         log(s, `${heroLabel} ataca.`);
-        runEffects(s, i, [{ do: "damage", target: "chooseEnemy", amount: st.fuerza }]);
+        runEffects(s, i, [{ do: "damage", target: "chooseEnemy", amount: st.fuerza }], 0, { basic: "hero" });
       } else {
         log(s, `${heroLabel} contiene el plan.`);
         runEffects(s, i, [{ do: "thwart", target: "choosePlan", amount: st.ingenio }]);
@@ -899,7 +1065,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       const effects: Effect[] = attack
         ? [{ do: "damage", target: "chooseEnemy", amount: st.fuerza }, { do: "selfDamage", amount: a.consFuerza }, ...(a.onKill ? [{ do: "ifKilled" as const, effects: a.onKill }] : []), ...(a.onAttack ?? [])]
         : [{ do: "thwart", target: "choosePlan", amount: st.ingenio }, { do: "selfDamage", amount: a.consIngenio }, ...(a.onThwart ?? [])];
-      runEffects(s, i, effects, 0, { source: c.uid, sourceName: def.name });
+      runEffects(s, i, effects, 0, { source: c.uid, sourceName: def.name, ...(attack ? { basic: c.uid } : {}) });
       return;
     }
     case "useCard": {
@@ -937,16 +1103,32 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       p.form = p.form === "heroe" ? "identidad" : "heroe";
       p.flippedThisTurn = true;
       log(s, p.form === "heroe" ? `${heroOf(p).identity.name} se transforma en ${heroLabel}.` : `${heroLabel} vuelve a ser ${heroOf(p).identity.name}.`);
+      const punish = currentStage(s).flipPunish ?? 0;
+      if (p.form === "heroe" && punish) {
+        log(s, `Reflejos fotográficos: ${villainStats(s).name} ya conocía ese movimiento y castiga la transformación.`);
+        damageHero(s, i, punish);
+      }
       return;
     }
     case "removeAttachment": {
       if (p.form !== "heroe") return "Solo en forma de héroe.";
-      if (p.heroExhausted) return `${heroLabel} está agotado.`;
       if (!s.villain.attachments.includes(x.attachment)) return "Ese vínculo ya no está.";
-      p.heroExhausted = true;
+      const rm = ecard(s, x.attachment).removal;
+      if (rm) {
+        const pay = x.pay ?? [];
+        if (pay.some((u) => !p.hand.includes(u))) return "Pago no válido.";
+        const got = pay.reduce((a, u) => a + (resMatches(pcard(s, u).resType, rm.res) ? pcard(s, u).resources : 0), 0);
+        if (got < rm.cost) return `Necesitas ${rm.cost} ${RES_ICON[rm.res]} para quitarla.`;
+        p.hand = p.hand.filter((u) => !pay.includes(u));
+        p.discard.push(...pay);
+        log(s, `${heroLabel} gasta ${RES_ICON[rm.res].repeat(rm.cost)} y desactiva ${ecard(s, x.attachment).name}.`);
+      } else {
+        if (p.heroExhausted) return `${heroLabel} está agotado.`;
+        p.heroExhausted = true;
+        log(s, `${heroLabel} arranca ${ecard(s, x.attachment).name} al villano.`);
+      }
       s.villain.attachments = s.villain.attachments.filter((u) => u !== x.attachment);
-      s.encounterDiscard.push(x.attachment);
-      log(s, `${heroLabel} arranca ${ecard(s, x.attachment).name} al villano.`);
+      toDiscard(s, x.attachment);
       return;
     }
     case "endTurn": {
@@ -1037,8 +1219,11 @@ function startVillainPhase(s: GameState) {
   log(s, `Fase del villano (ronda ${s.round}).`);
   const q: VillainStep[] = [{ s: "accelerate" }];
   for (const i of order(s)) q.push({ s: "villainActivates", player: i }, { s: "minionsActivate", player: i });
-  q.push({ s: "deal" }, { s: "endRound" });
-  s.villainQueue = q;
+  q.push({ s: "deal" });
+  if (scenarioOf(s).counters) q.push({ s: "counters" });
+  q.push({ s: "endRound" });
+  // Anything queued during the players' turns (a surge from a stage revealed mid-turn…) resolves first.
+  s.villainQueue = [q[0], ...s.villainQueue, ...q.slice(1)];
   runVillain(s);
 }
 
@@ -1069,6 +1254,22 @@ function villainStep(s: GameState, st: VillainStep) {
       const accel = s.plans.filter((p) => p.def !== "main" && ecard(s, p.uid).sidePlan?.aceleracion);
       log(s, `Base: +${base} amenaza${accel.length ? ` · Aceleración: +${accel.length} (${accel.map((x) => ecard(s, x.uid).name).join(", ")})` : ""} → +${base + accel.length} en total.`);
       addThreat(s, "main", base + accel.length);
+      for (const x of [...s.plans]) { const g = x.def !== "main" ? ecard(s, x.uid).sidePlan?.grows : 0; if (g) addThreat(s, x.uid, g * playerCount(s)); }
+      const ps = scenarioOf(s).phaseStart;
+      if (ps && !s.result) runEffects(s, firstAlive(s), ps);
+      return;
+    }
+    case "counters": {
+      const c = scenarioOf(s).counters;
+      if (!c) return;
+      report(s, 3, `Paso 4 · Contadores de ${c.name}`);
+      s.planCounters = (s.planCounters ?? 0) + c.perRound;
+      log(s, `El plan principal gana ${c.perRound} contador${c.perRound === 1 ? "" : "es"} de ${c.name}: ${s.planCounters} de ${c.threshold}.`);
+      if (s.planCounters >= c.threshold) {
+        s.planCounters -= c.threshold;
+        log(s, `¡${c.threshold} contadores de ${c.name}! ${c.text}`);
+        runEffects(s, firstAlive(s), c.effects);
+      }
       return;
     }
     case "villainActivates": {
@@ -1107,6 +1308,8 @@ function villainStep(s: GameState, st: VillainStep) {
       } else {
         log(s, `Plan ${v.plan} + ${boost} ⭐ = +${v.plan + boost} amenaza al plan principal.`);
         addThreat(s, "main", v.plan + boost);
+        const env = environmentDef(s);
+        if (env?.environment?.afterScheme && !s.result) { log(s, `${env.name}: ${env.environment.trait}.`); runEffects(s, st.player, env.environment.afterScheme); }
       }
       return;
     }
@@ -1120,10 +1323,17 @@ function villainStep(s: GameState, st: VillainStep) {
       return;
     }
     case "deal": {
-      for (const i of order(s)) {
+      const ord = order(s);
+      const hazards = s.plans.filter((x) => x.def !== "main" && ecard(s, x.uid).sidePlan?.peligro).length;
+      const tail = s.villainQueue.findIndex((x) => x.s === "endRound" || x.s === "counters");
+      const at = tail >= 0 ? tail : s.villainQueue.length;
+      const dealt: VillainStep[] = [];
+      for (let k = 0; k < ord.length + hazards; k++) {
         const c = takeEncounter(s);
-        if (c) s.villainQueue.splice(s.villainQueue.length - 1, 0, { s: "reveal", player: i, card: c });
+        if (c) dealt.push({ s: "reveal", player: ord[k % ord.length], card: c });
       }
+      if (hazards) log(s, `Peligro: se reparte${hazards > 1 ? "n" : ""} ${hazards} carta${hazards > 1 ? "s" : ""} de encuentro más.`);
+      s.villainQueue.splice(at, 0, ...dealt);
       return;
     }
     case "reveal": {
@@ -1162,23 +1372,26 @@ function activateMinion(s: GameState, i: number, uid: string) {
   }
 }
 
-function reveal(s: GameState, i: number, uid: string) {
+/** A minion engages a player (with its starting statuses and "when revealed" effects). */
+function engageMinion(s: GameState, i: number, uid: string) {
   const def = ecard(s, uid);
   const p = s.players[i];
+  const m: MinionState = { uid, def: def.id, damage: 0 };
+  for (const k of def.startStatus ?? []) m[k] = true;
+  p.engaged.push(m);
+  log(s, `${def.name} se enfrenta a ${heroName(s, i)} (⚔${def.minion!.fuerza} ☾${def.minion!.plan} ♥${def.minion!.vida}${def.startStatus?.length ? `, ${def.startStatus.map((k) => STATUS_NAME[k]).join(", ")}` : ""}).`);
+  if (def.reveal) runEffects(s, i, def.reveal);
+}
+
+function reveal(s: GameState, i: number, uid: string) {
+  const def = ecard(s, uid);
   report(s, 3, `Paso 3 · Encuentro para ${heroName(s, i)}: ${def.name}`, [def.id]);
   log(s, `Encuentro para ${heroName(s, i)}: ${def.name}.`);
   switch (def.type) {
-    case "esbirro": {
-      const m: MinionState = { uid, def: def.id, damage: 0 };
-      for (const k of def.startStatus ?? []) m[k] = true;
-      p.engaged.push(m);
-      log(s, `${def.name} se enfrenta a ${heroName(s, i)} (⚔${def.minion!.fuerza} ☾${def.minion!.plan} ♥${def.minion!.vida}${def.startStatus?.length ? `, ${def.startStatus.map((k) => STATUS_NAME[k]).join(", ")}` : ""}).`);
-      if (def.reveal) runEffects(s, i, def.reveal);
-      return;
-    }
-    case "plan":
-      s.plans.push({ uid, def: def.id, threat: def.sidePlan!.amenaza });
-      log(s, `Entra en juego el plan secundario ${def.name} con ${def.sidePlan!.amenaza} amenaza.`);
+    case "esbirro": engageMinion(s, i, uid); return;
+    case "plan": enterSidePlan(s, i, uid); return;
+    case "entorno":
+      setEnvironment(s, uid);
       if (def.reveal) runEffects(s, i, def.reveal);
       return;
     case "vinculo": s.villain.attachments.push(uid); return;
@@ -1310,21 +1523,37 @@ function applyAttackDamage(s: GameState, r: Extract<Resume, { r: "interrupts" }>
   if (r.attacker === "villain") {
     for (const u of s.villain.attachments.filter((x) => r.oneShots?.includes(x))) {
       s.villain.attachments = s.villain.attachments.filter((x) => x !== u);
-      s.encounterDiscard.push(u);
+      toDiscard(s, u);
       log(s, `${ecard(s, u).name} se agota tras el golpe y se descarta.`);
     }
+  }
+  const kw = attackerKeywords(s, r.attacker);
+  if (kw.includes("perforante")) {
+    const ally = r.defender && r.defender !== "hero" ? p.play.find((c) => c.uid === r.defender) : undefined;
+    const holder: Statuses = ally ?? p;
+    if (holder.tough) { holder.tough = false; log(s, `Perforante: el golpe atraviesa a ${ally ? pcard(s, ally.uid).name : heroName(s, r.player)} y le quita Duro.`); }
   }
   let dmg = Math.max(0, r.amount - r.prevented);
   if (r.defender === "hero") dmg = Math.max(0, dmg - heroStats(s, r.player).aguante);
   const parts = [`ataque ${r.amount}`, r.prevented ? `evitado ${r.prevented}` : "", r.defender === "hero" ? `Aguante ${heroStats(s, r.player).aguante}` : ""].filter(Boolean).join(" − ");
   log(s, `Resultado: ${parts} → ${dmg} daño a ${r.defender && r.defender !== "hero" ? pcard(s, r.defender).name : heroName(s, r.player)}.`);
-  if (r.defender && r.defender !== "hero") damageAlly(s, r.player, r.defender, dmg);
+  const heroBefore = p.damage;
+  if (r.defender && r.defender !== "hero") {
+    const c = p.play.find((x) => x.uid === r.defender);
+    const left = c ? allyStats(s, c).vida - c.damage : 0;
+    damageAlly(s, r.player, r.defender, dmg);
+    if (kw.includes("arrollador") && c && !c.tough && dmg > left) { log(s, `Arrollador: ${dmg - left} daño sobrante alcanza a ${heroName(s, r.player)}.`); damageHero(s, r.player, dmg - left); }
+  }
   else if (dmg > 0) damageHero(s, r.player, dmg);
   else log(s, `${heroName(s, r.player)} no recibe daño.`);
   if (checkEnd(s) || p.eliminated) return;
-  // Represalia: the hero hits back.
+  // The absorbed environment's after-attack effect (e.g. ice stuns a hero it hurt).
+  const env = environmentDef(s)?.environment;
+  if (r.attacker === "villain" && env?.afterAttack && p.damage > heroBefore) { runEffects(s, r.player, env.afterAttack); if (checkEnd(s)) return; }
+  // Represalia: the hero hits back (not against ranged attackers).
   const ret = p.form === "heroe" ? (heroOf(p).hero.retaliate ?? 0) + p.play.reduce((a, c) => a + (pcard(s, c.uid).retaliate ?? 0), 0) : 0;
-  if (ret && (r.attacker === "villain" || refFromID(s, r.attacker))) { log(s, `Represalia: ${ret} daño a ${enemyName(s, r.attacker)}.`); damageEnemy(s, r.attacker, ret); if (checkEnd(s)) return; }
+  if (ret && kw.includes("distancia")) log(s, `${enemyName(s, r.attacker)} ataca a distancia: la Represalia no le alcanza.`);
+  else if (ret && (r.attacker === "villain" || refFromID(s, r.attacker))) { log(s, `Represalia: ${ret} daño a ${enemyName(s, r.attacker)}.`); damageEnemy(s, r.attacker, ret); if (checkEnd(s)) return; }
   const opts = responsesFor(s, r.player, "afterAttack");
   const attackerAlive = r.attacker === "villain" || !!refFromID(s, r.attacker);
   if (!opts.length || !attackerAlive) return;

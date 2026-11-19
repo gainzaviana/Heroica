@@ -5,9 +5,10 @@ import { artUrl } from "./art";
 
 const TYPE_NAME: Record<string, string> = {
   aliado: "Aliado", mejora: "Mejora", apoyo: "Apoyo", evento: "Evento", recurso: "Recurso",
-  esbirro: "Esbirro", traicion: "Traición", plan: "Plan secundario", vinculo: "Vínculo", obligacion: "Obligación",
+  esbirro: "Esbirro", traicion: "Traición", plan: "Plan secundario", vinculo: "Vínculo", obligacion: "Obligación", entorno: "Entorno",
 };
-const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo" };
+const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo", legion: "Legión", mutante: "Mutante", arma: "Arma experimental", campana: "Campaña", oricalco: "Oricalco" };
+const KW: Record<string, string> = { perforante: "Perforante", arrollador: "Arrollador", distancia: "A distancia" };
 const STATUS_ICON: Record<StatusKind, string> = { stunned: "💫", confused: "🌀", tough: "🛡️" };
 
 /** A card's printed resources: one icon per resource, coloured by type. */
@@ -84,7 +85,11 @@ export function EncounterCard({ def, size = "md", damage, status, onClick, stats
     <Tag type={onClick ? "button" : undefined} role={onClick ? undefined : "group"} class={`card card-${size} enc t-${def.type}`} onClick={onClick} aria-label={`${def.name}. ${TYPE_NAME[def.type]}. ${def.text}`}>
       <span class="card-head"><span class="card-name">{def.name}</span></span>
       <Art artKey={def.id} glyph={def.glyph} />
-      <span class="card-band">{TYPE_NAME[def.type]}{def.minion?.guardia ? " · Guardia" : ""}{def.sidePlan?.aceleracion ? " · Aceleración" : ""}</span>
+      <span class="card-band">{[
+        TYPE_NAME[def.type], ...(def.traits ?? []).map(traitName), def.minion?.guardia && "Guardia", def.minion?.retaliate && `Represalia ${def.minion.retaliate}`,
+        ...[...(def.minion?.keywords ?? []), ...(def.keywords ?? [])].map((k) => KW[k]), def.environment && def.environment.trait,
+        def.sidePlan?.aceleracion && "Aceleración", def.sidePlan?.crisis && "Crisis", def.sidePlan?.peligro && "Peligro",
+      ].filter(Boolean).join(" · ")}</span>
       {size !== "sm" && <span class="card-body">{def.text}</span>}
       <span class="card-foot">
         {m ? (

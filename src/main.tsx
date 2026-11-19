@@ -1,7 +1,9 @@
 import { render } from "preact";
 import { useState } from "preact/hooks";
 import "./styles.css";
-import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, SCENARIOS } from "./data/content";
+import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, packOf, PACKS, PLAYER_CARDS, SCENARIOS } from "./data/content";
+import { campaignById } from "./ui/campaign";
+import { PlayerCard } from "./ui/Card";
 import type { ScenarioDef } from "./engine/types";
 import { DeckViewer } from "./ui/DeckViewer";
 import { beaten, exportProgress, importProgress, resetProgress, tried, type Progress } from "./ui/progress";
@@ -16,6 +18,16 @@ function Start() {
   // Start on the first villain this hero hasn't beaten yet.
   const [scenario, setScenario] = useState((SCENARIOS.find((x) => !beaten(p, HEROES[0].id, x.id)) ?? SCENARIOS[0]).id);
   const [showProgress, setShowProgress] = useState(false);
+  const [pack, setPack] = useState(packOf(SCENARIOS.find((x) => x.id === scenario)!));
+  const pk = PACKS.find((x) => x.id === pack)!;
+  const packScenarios = SCENARIOS.filter((x) => packOf(x) === pack);
+  const unlocked = pk.campaign ? st.campaigns[pk.id]?.unlocked ?? 0 : Infinity;
+  const isLocked = (id: string) => packScenarios.findIndex((x) => x.id === id) > unlocked;
+  const choosePack = (id: string) => {
+    setPack(id);
+    const list = SCENARIOS.filter((x) => packOf(x) === id);
+    setScenario((list.find((x) => !beaten(p, heroes[0] ?? HEROES[0].id, x.id)) ?? list[0]).id);
+  };
   const [rules, setRules] = useState(false);
   const [difficulty, setDifficulty] = useState<"normal" | "experto">("normal");
   const [deck, setDeck] = useState<string>();
@@ -51,16 +63,30 @@ function Start() {
         </div>
       </section>
       <section class="panel">
-        <div class="kicker">Escenario</div>
-        <div class="scenario-pick">
-          {SCENARIOS.map((x) => (
-            <button key={x.id} class={`pick scenario${x.id === scenario ? " on" : ""}`} onClick={() => setScenario(x.id)} aria-pressed={x.id === scenario}>
-              <Portrait artKey={`villain-${x.id}`} glyph={x.villain.glyph} />
-              <span class="title">{x.name}</span>
-              <span class="muted small">{x.villain.name}</span>
-              <ScenarioStatus p={p} heroes={heroes} scenario={x.id} />
+        <div class="kicker">Campañas</div>
+        <div class="tabs" role="tablist" aria-label="Campañas">
+          {PACKS.map((x) => (
+            <button key={x.id} role="tab" aria-selected={x.id === pack} class={x.id === pack ? "on" : ""} style={{ ["--hero" as string]: x.campaign ? "#b5442c" : "#3d6fb6" }} onClick={() => choosePack(x.id)}>
+              {x.name}
             </button>
           ))}
+        </div>
+        <p class="muted small">{pk.intro}</p>
+        {pk.campaign && <CampaignPanel id={pk.id} heroes={heroes} difficulty={difficulty} />}
+        <div class="kicker">{pk.campaign ? "Misiones sueltas (las desbloqueas avanzando en la campaña)" : "Escenarios"}</div>
+        <div class="scenario-pick">
+          {packScenarios.map((x, k) => {
+            const locked = isLocked(x.id);
+            return (
+              <button key={x.id} class={`pick scenario${x.id === scenario ? " on" : ""}${locked ? " locked" : ""}`} disabled={locked} onClick={() => setScenario(x.id)} aria-pressed={x.id === scenario}>
+                <Portrait artKey={`villain-${x.id}`} glyph={locked ? "🔒" : x.villain.glyph} />
+                <span class="muted small">{pk.campaign ? `Misión ${k + 1}` : `Escenario ${k + 1}`}</span>
+                <span class="title">{x.name}</span>
+                <span class="muted small">{x.villain.name}</span>
+                {locked ? <span class="small">🔒 Supera la misión {k} en campaña para desbloquearla.</span> : <ScenarioStatus p={p} heroes={heroes} scenario={x.id} />}
+              </button>
+            );
+          })}
         </div>
         <p class="muted">{sc.intro}</p>
         <div class="kicker">Dificultad</div>
@@ -73,8 +99,8 @@ function Start() {
         </div>
         <p class="muted small">{difficultyText(sc, difficulty)}</p>
       </section>
-      <button class="act gold wide big" disabled={!heroes.length} onClick={() => store.start(scenario, heroes, difficulty)}>
-        {heroes.length === 2 ? "Empezar a dos manos" : "Empezar en solitario"}
+      <button class="act gold wide big" disabled={!heroes.length || isLocked(scenario) || packOf(sc) !== pack} onClick={() => store.start(scenario, heroes, difficulty)}>
+        {pk.campaign ? `Partida suelta: ${sc.name}` : heroes.length === 2 ? "Empezar a dos manos" : "Empezar en solitario"}
       </button>
       <button class="act ghost wide" onClick={() => setShowProgress(true)}>Progreso por héroe</button>
       <button class="act ghost wide" onClick={() => setRules(true)}>Cómo se juega</button>
@@ -82,6 +108,80 @@ function Start() {
       {deck && <DeckViewer hero={HEROES.find((h) => h.id === deck)!} onClose={() => setDeck(undefined)} />}
       {rules && <Modal onClose={() => setRules(false)}><Rules /><button class="act ghost wide" onClick={() => setRules(false)}>Cerrar</button></Modal>}
     </main>
+  );
+}
+
+/** Campaign mode for a pack: start, continue, rewards between missions, and the campaign log. */
+function CampaignPanel({ id, heroes, difficulty }: { id: string; heroes: string[]; difficulty: "normal" | "experto" }) {
+  const st = useStore();
+  const def = campaignById(id)!;
+  const saved = st.campaigns[id];
+  const c = saved?.active;
+  const heroName = (h: string) => HEROES.find((x) => x.id === h)?.hero.name ?? h;
+  const cardName = (cid: string) => PLAYER_CARDS.get(cid)?.name ?? cid;
+  const startNew = () => {
+    if (c && !confirm("Ya tienes una campaña en curso. ¿Empezar otra nueva? Se perderá la actual.")) return;
+    st.startCampaign(id, heroes, difficulty);
+  };
+  const who = heroes.map(heroName).join(" y ");
+  if (!c) {
+    return (
+      <div class="campaign">
+        <div class="title">Modo campaña</div>
+        <p class="small">Juega las {def.scenarios.length} misiones en orden con los mismos héroes. Entre misiones se guardan las heridas (la mitad del daño), las cartas de recompensa, los aliados rescatados y las condiciones que deje cada final.</p>
+        {saved.completed > 0 && <p class="small">🏆 Campaña completada {saved.completed} {saved.completed === 1 ? "vez" : "veces"}.</p>}
+        <button class="act gold wide" disabled={!heroes.length} onClick={startNew}>Empezar campaña con {who || "…"} ({difficulty === "experto" ? "Experto" : "Normal"})</button>
+      </div>
+    );
+  }
+  const done = c.step >= def.scenarios.length;
+  const next = !done ? SCENARIOS.find((x) => x.id === def.scenarios[c.step])! : undefined;
+  const extra = c.heroes.flatMap((h) => (c.boons[h] ?? []).length ? [`${heroName(h)}: ${c.boons[h].map(cardName).join(", ")}`] : []);
+  const wounds = c.heroes.filter((h) => c.wounds[h]).map((h) => `${heroName(h)} ${c.wounds[h]}`);
+  return (
+    <div class="campaign">
+      <div class="row"><span class="title grow">Campaña en curso</span><span class="chip">{c.difficulty === "experto" ? "Experto" : "Normal"}</span></div>
+      <div class="small">{c.heroes.map(heroName).join(" y ")} · {Math.min(c.step, def.scenarios.length)}/{def.scenarios.length} villanos derrotados</div>
+      <ol class="mission-track">
+        {def.scenarios.map((sid, k) => {
+          const x = SCENARIOS.find((y) => y.id === sid)!;
+          const state = k < c.step ? "done" : k === c.step ? "now" : "todo";
+          return <li key={sid} class={state}><span aria-hidden="true">{state === "done" ? "✓" : state === "now" ? "▶" : k + 1}</span> {x.villain.name}<span class="sr-only">{state === "done" ? " (derrotado)" : state === "now" ? " (siguiente)" : ""}</span></li>;
+        })}
+      </ol>
+      {c.pendingReward ? (
+        <div class="reward">
+          <div class="kicker">Recompensa: cada héroe añade una carta a su mazo</div>
+          {c.heroes.map((h) => (
+            <div key={h}>
+              <div class="small"><b>{heroName(h)}</b>{c.pendingReward!.chosen[h] ? ` eligió ${cardName(c.pendingReward!.chosen[h])}` : " elige:"}</div>
+              <div class="cards wrap">
+                {c.pendingReward!.options.map((o) => <PlayerCard key={o} def={PLAYER_CARDS.get(o)!} size="md" selected={c.pendingReward!.chosen[h] === o} onClick={() => st.chooseReward(id, h, o)} />)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : done ? (
+        <p class="small">🏆 ¡Campaña completada! Puedes empezar otra con otros héroes o en Experto.</p>
+      ) : (
+        <button class="act gold wide" onClick={() => st.playMission(id)}>{c.attempts && c.log.at(-1)?.text.startsWith("Derrota") ? "Reintentar" : "Jugar"} misión {c.step + 1}: {next!.name}</button>
+      )}
+      {(wounds.length > 0 || extra.length > 0 || c.conditions.length > 0) && (
+        <ul class="campaign-state small">
+          {wounds.length > 0 && <li>🩹 Heridas: {wounds.join(", ")}</li>}
+          {extra.length > 0 && <li>🎁 Cartas ganadas: {extra.join(" · ")}</li>}
+          {c.conditions.map((k) => <li key={k}>⚠ {def.conditions[k].name}: {def.conditions[k].text}</li>)}
+        </ul>
+      )}
+      <details class="campaign-log">
+        <summary>Registro de campaña ({c.log.length})</summary>
+        <ul class="small">{c.log.map((l, k) => <li key={k}>{l.text}</li>)}</ul>
+      </details>
+      <div class="row gap">
+        <button class="act ghost grow" disabled={!heroes.length} onClick={startNew}>Nueva campaña con {who || "…"}</button>
+        <button class="act ghost grow" onClick={() => { if (confirm("¿Abandonar la campaña en curso?")) st.abandonCampaign(id); }}>Abandonar</button>
+      </div>
+    </div>
   );
 }
 
