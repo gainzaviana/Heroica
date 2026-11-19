@@ -1,5 +1,5 @@
 import { render } from "preact";
-import { useState } from "preact/hooks";
+import { useEffect, useState } from "preact/hooks";
 import "./styles.css";
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, packOf, PACKS, PLAYER_CARDS, SCENARIOS } from "./data/content";
 import { campaignById } from "./ui/campaign";
@@ -283,20 +283,24 @@ function ScenarioStatus({ p, heroes, scenario }: { p: Progress; heroes: string[]
 function ProgressTable({ p }: { p: Progress }) {
   const st = useStore();
   const [msg, setMsg] = useState<string>();
+  const [stored, setStored] = useState<boolean>();
+  useEffect(() => { void navigator.storage?.persisted?.().then(setStored).catch(() => undefined); }, []);
   const download = () => {
     const url = URL.createObjectURL(new Blob([exportProgress()], { type: "application/json" }));
     const a = document.createElement("a");
-    a.href = url; a.download = "heroica-progreso.json"; a.click();
+    a.href = url; a.download = `heroica-partida-${new Date().toISOString().slice(0, 10)}.json`; a.click();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   };
   const upload = (e: Event) => {
     const file = (e.currentTarget as HTMLInputElement).files?.[0];
     if (!file) return;
     void file.text().then((text) => {
+      if (!confirm("Cargar este archivo sustituye todo lo guardado en este dispositivo (héroes, campañas y partida en curso). ¿Seguir?")) return;
       const err = importProgress(text);
-      setMsg(err ?? "Progreso cargado.");
-      if (!err) st.reloadProgress();
+      setMsg(err ?? "Partida cargada: todo tu progreso está como en el archivo.");
+      if (!err) st.reloadAll();
     });
+    (e.currentTarget as HTMLInputElement).value = "";
   };
   const reset = () => {
     if (!confirm("¿Borrar todo el progreso de todos los héroes? No se puede deshacer.")) return;
@@ -314,7 +318,8 @@ function ProgressTable({ p }: { p: Progress }) {
   return (
     <div class="progress">
       <div class="title big">Progreso por héroe</div>
-      <p class="muted small">Victorias (V) y derrotas (D) de cada héroe contra cada villano, y la victoria más rápida en rondas. Una partida a dos manos cuenta para los dos héroes. Se guarda en este dispositivo.</p>
+      <p class="muted small">Victorias (V) y derrotas (D) de cada héroe contra cada villano, y la victoria más rápida en rondas. Una partida a dos manos cuenta para los dos héroes.</p>
+      <p class="muted small">Todo se guarda solo en este dispositivo y sigue ahí cada vez que abres Heroica: el progreso de los héroes, las campañas y la partida en curso. {stored === true ? "El navegador lo tiene protegido y no lo borrará por falta de espacio." : "Para que el iPad no lo borre, añade Heroica a la pantalla de inicio."} Con «Guardar copia» te llevas todo a otro dispositivo o navegador, y con «Cargar copia» lo recuperas.</p>
       <div class="progress-scroll">
         <table class="progress-table">
           <thead>
@@ -336,8 +341,8 @@ function ProgressTable({ p }: { p: Progress }) {
         </table>
       </div>
       <div class="progress-actions">
-        <button class="act ghost" onClick={download}>Exportar</button>
-        <label class="act ghost">Importar<input type="file" accept="application/json,.json" hidden onChange={upload} /></label>
+        <button class="act ghost" onClick={download}>Guardar copia</button>
+        <label class="act ghost">Cargar copia<input type="file" accept="application/json,.json" hidden onChange={upload} /></label>
         <button class="act ghost" onClick={reset}>Borrar progreso</button>
       </div>
       {msg && <p class="small" role="status">{msg}</p>}

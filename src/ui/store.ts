@@ -130,6 +130,14 @@ class Store {
   }
 
   reloadProgress() { this.progress = loadProgress(); for (const fn of this.listeners) fn(); }
+  /** After loading a save file: read everything again from this device. */
+  reloadAll() {
+    this.state = load();
+    this.previous = null;
+    this.progress = loadProgress();
+    this.campaigns = Object.fromEntries(CAMPAIGNS.map((c) => [c.id, loadCampaign(c.id)]));
+    for (const fn of this.listeners) fn();
+  }
 
   get canUndo() { return this.previous !== null; }
   undo() {

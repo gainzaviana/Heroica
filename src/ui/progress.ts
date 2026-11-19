@@ -53,13 +53,34 @@ export function tried(p: Progress, hero: string, scenario: string): boolean {
   return !!d && Object.values(d).some((r) => r && r.wins + r.losses > 0);
 }
 
-/** Download the progress as a file, and read it back (to move it to another device). */
-export function exportProgress(): string { return JSON.stringify({ heroica: 1, progreso: loadProgress() }, null, 1); }
+/**
+ * A full save file: hero progress, every campaign and the game in progress. Moves your adventure
+ * to another device or browser, or keeps a copy in case the browser clears its data.
+ * Old files (version 1, progress only) still load.
+ */
+const SAVE_KEYS = (k: string) => k === KEY || k === "heroica.partida" || k.startsWith("heroica.campana.");
+
+export function exportProgress(): string {
+  const datos: Record<string, unknown> = {};
+  try {
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i)!;
+      if (SAVE_KEYS(k)) datos[k] = JSON.parse(localStorage.getItem(k)!);
+    }
+  } catch { /* storage blocked */ }
+  return JSON.stringify({ heroica: 2, fecha: new Date().toISOString().slice(0, 10), datos }, null, 1);
+}
+
 export function importProgress(text: string): string | undefined {
   try {
-    const data = JSON.parse(text) as { heroica?: number; progreso?: Progress };
-    if (data?.heroica !== 1 || typeof data.progreso !== "object") return "Ese archivo no es un progreso de Heroica.";
-    saveProgress(data.progreso);
+    const data = JSON.parse(text) as { heroica?: number; progreso?: Progress; datos?: Record<string, unknown> };
+    if (data?.heroica === 1 && data.progreso && typeof data.progreso === "object") { saveProgress(data.progreso); return undefined; }
+    if (data?.heroica !== 2 || !data.datos || typeof data.datos !== "object") return "Ese archivo no es una partida guardada de Heroica.";
+    const entries = Object.entries(data.datos).filter(([k, v]) => SAVE_KEYS(k) && v && typeof v === "object");
+    if (!entries.length) return "Ese archivo está vacío.";
+    // Replace the whole save, so nothing from the old one is mixed in.
+    for (let i = localStorage.length - 1; i >= 0; i--) { const k = localStorage.key(i)!; if (SAVE_KEYS(k)) localStorage.removeItem(k); }
+    for (const [k, v] of entries) localStorage.setItem(k, JSON.stringify(v));
     return undefined;
   } catch { return "No se pudo leer el archivo."; }
 }

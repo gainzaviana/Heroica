@@ -827,6 +827,32 @@ describe("Progreso por héroe", () => {
     const r = (p as never as Record<string, Record<string, Record<string, { wins: number; losses: number; bestRound: number }>>>)[HEROES[0].id][SCENARIOS[0].id].normal;
     expect(r).toMatchObject({ wins: 2, losses: 1, bestRound: 4 });
   });
+
+  it("la copia guarda héroes, campañas y la partida en curso, y se recupera entera", async () => {
+    const mem = new Map<string, string>();
+    const ls = { get length() { return mem.size; }, key: (i: number) => [...mem.keys()][i] ?? null, getItem: (k: string) => mem.get(k) ?? null, setItem: (k: string, v: string) => void mem.set(k, v), removeItem: (k: string) => void mem.delete(k), clear: () => mem.clear() };
+    const prev = (globalThis as { localStorage?: unknown }).localStorage;
+    (globalThis as { localStorage?: unknown }).localStorage = ls;
+    try {
+      const { exportProgress, importProgress, loadProgress } = await import("../ui/progress");
+      mem.set("heroica.progreso", JSON.stringify({ vanguardia: { x: { normal: { wins: 1, losses: 0 } } } }));
+      mem.set("heroica.campana.ceniza", JSON.stringify({ unlocked: 2, completed: 0 }));
+      mem.set("heroica.partida", JSON.stringify({ round: 3 }));
+      mem.set("otra.app", "no");
+      const file = exportProgress();
+      mem.clear();
+      mem.set("heroica.campana.vieja", "{}");
+      expect(importProgress(file)).toBeUndefined();
+      expect(loadProgress()).toMatchObject({ vanguardia: { x: { normal: { wins: 1 } } } });
+      expect(JSON.parse(mem.get("heroica.campana.ceniza")!)).toMatchObject({ unlocked: 2 });
+      expect(JSON.parse(mem.get("heroica.partida")!)).toMatchObject({ round: 3 });
+      expect(mem.has("heroica.campana.vieja")).toBe(false);
+      expect(mem.has("otra.app")).toBe(false);
+      // Old progress-only files still load.
+      expect(importProgress(JSON.stringify({ heroica: 1, progreso: { a: {} } }))).toBeUndefined();
+      expect(importProgress("{}")).toBeTruthy();
+    } finally { (globalThis as { localStorage?: unknown }).localStorage = prev; }
+  });
 });
 
 describe("Campaña: El Ascenso del Mariscal de Ceniza", () => {
