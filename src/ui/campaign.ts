@@ -26,7 +26,11 @@ export interface CampaignState {
   pendingReward?: { options: string[]; chosen: Record<string, string> };
   attempts: number;
 }
-interface Saved { active?: CampaignState; unlocked: number; completed: number }
+export interface Saved {
+  active?: CampaignState; unlocked: number; completed: number;
+  /** Campaigns completed by each hero, by difficulty. */
+  completedBy?: Record<string, { normal?: number; experto?: number }>;
+}
 
 export const CAMPAIGNS: CampaignDef[] = [CENIZA_CAMPAIGN];
 export const campaignById = (id: string) => CAMPAIGNS.find((c) => c.id === id);
@@ -36,7 +40,7 @@ export function loadCampaign(id: string): Saved {
   try {
     const t = localStorage.getItem(KEY(id));
     const v = t ? (JSON.parse(t) as Saved) : undefined;
-    return v && typeof v === "object" ? { unlocked: v.unlocked ?? 0, completed: v.completed ?? 0, active: v.active } : { unlocked: 0, completed: 0 };
+    return v && typeof v === "object" ? { unlocked: v.unlocked ?? 0, completed: v.completed ?? 0, active: v.active, completedBy: v.completedBy ?? {} } : { unlocked: 0, completed: 0 };
   } catch { return { unlocked: 0, completed: 0 }; }
 }
 export function saveCampaign(id: string, v: Saved) { try { localStorage.setItem(KEY(id), JSON.stringify(v)); } catch { /* storage full or blocked */ } }

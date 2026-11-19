@@ -118,7 +118,13 @@ class Store {
       this.campaignLines = applyResult(saved.active, s);
       const n = campaignById(cs!.id)!.scenarios.length;
       saved.unlocked = Math.max(saved.unlocked, Math.min(n - 1, saved.active.step));
-      if (saved.active.step >= n) saved.completed++;
+      if (saved.active.step >= n) {
+        saved.completed++;
+        for (const h of saved.active.heroes) {
+          const r = ((saved.completedBy ??= {})[h] ??= {});
+          r[saved.active.difficulty] = (r[saved.active.difficulty] ?? 0) + 1;
+        }
+      }
       saveCampaign(cs!.id, saved);
     }
   }

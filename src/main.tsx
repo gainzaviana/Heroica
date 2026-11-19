@@ -18,6 +18,7 @@ function Start() {
   // Start on the first villain this hero hasn't beaten yet.
   const [scenario, setScenario] = useState((SCENARIOS.find((x) => !beaten(p, HEROES[0].id, x.id)) ?? SCENARIOS[0]).id);
   const [showProgress, setShowProgress] = useState(false);
+  const [heroInfo, setHeroInfo] = useState<string>();
   const [pack, setPack] = useState(packOf(SCENARIOS.find((x) => x.id === scenario)!));
   const pk = PACKS.find((x) => x.id === pack)!;
   const packScenarios = SCENARIOS.filter((x) => packOf(x) === pack);
@@ -56,7 +57,10 @@ function Start() {
                 <HeroProgress p={p} hero={h.id} />
                 {on && <span class="chip ready">{heroes.indexOf(h.id) === 0 ? "Jugador 1" : "Jugador 2"}</span>}
               </button>
-              <button class="act ghost deck-btn" onClick={() => setDeck(h.id)}>Ver mazo ({h.deck.length} cartas)</button>
+              <div class="row gap">
+                <button class="act ghost deck-btn grow" onClick={() => setDeck(h.id)} aria-label={`Ver mazo de ${h.hero.name} (${h.deck.length} cartas)`}>Ver mazo · {h.deck.length}</button>
+                <button class="act ghost deck-btn info-btn" onClick={() => setHeroInfo(h.id)} aria-label={`Progreso de ${h.hero.name}`} title="Progreso en campañas">📊</button>
+              </div>
               </div>
             );
           })}
@@ -104,6 +108,7 @@ function Start() {
       </button>
       <button class="act ghost wide" onClick={() => setShowProgress(true)}>Progreso por héroe</button>
       <button class="act ghost wide" onClick={() => setRules(true)}>Cómo se juega</button>
+      {heroInfo && <Modal label="Progreso del héroe" onClose={() => setHeroInfo(undefined)}><HeroCampaigns hero={heroInfo} /><button class="act ghost wide" onClick={() => setHeroInfo(undefined)}>Cerrar</button></Modal>}
       {showProgress && <Modal wide label="Progreso" onClose={() => setShowProgress(false)}><ProgressTable p={p} /><button class="act ghost wide" onClick={() => setShowProgress(false)}>Cerrar</button></Modal>}
       {deck && <DeckViewer hero={HEROES.find((h) => h.id === deck)!} onClose={() => setDeck(undefined)} />}
       {rules && <Modal onClose={() => setRules(false)}><Rules /><button class="act ghost wide" onClick={() => setRules(false)}>Cerrar</button></Modal>}
@@ -194,17 +199,68 @@ function mark(p: Progress, hero: string, scenario: string) {
   return { icon: "·", cls: "new", text: "sin jugar" };
 }
 
-/** On each hero: how many villains they have beaten, with one mark per scenario. */
+/** On each hero: villains beaten in each campaign pack (details in the 📊 view). */
 function HeroProgress({ p, hero }: { p: Progress; hero: string }) {
-  const n = SCENARIOS.filter((x) => beaten(p, hero, x.id)).length;
+  const st = useStore();
   return (
-    <span class="hero-progress small" aria-label={`Villanos vencidos: ${n} de ${SCENARIOS.length}`}>
-      <span>Vencidos {n}/{SCENARIOS.length}</span>
-      {SCENARIOS.map((x) => {
-        const m = mark(p, hero, x.id);
-        return <span key={x.id} class={`pmark ${m.cls}`} title={`${x.villain.name}: ${m.text}`} aria-hidden="true">{m.icon}</span>;
+    <span class="hero-progress small">
+      {PACKS.map((pk) => {
+        const list = SCENARIOS.filter((x) => packOf(x) === pk.id);
+        const n = list.filter((x) => beaten(p, hero, x.id)).length;
+        const done = pk.campaign ? Object.values(st.campaigns[pk.id]?.completedBy?.[hero] ?? {}).reduce((a, b) => a + (b ?? 0), 0) : 0;
+        return (
+          <span key={pk.id} class={`pack-chip${n === list.length ? " full" : ""}`} title={`${pk.name}: ${n} de ${list.length} villanos vencidos`}>
+            {done > 0 ? "🏆 " : ""}{shortPack(pk.name)} {n}/{list.length}
+          </span>
+        );
       })}
     </span>
+  );
+}
+const shortPack = (name: string) => (name.startsWith("El Ascenso del ") ? name.slice(15) : name);
+
+/** A hero's quick view: each campaign pack, its scenarios with results, and the campaigns played and completed. */
+function HeroCampaigns({ hero }: { hero: string }) {
+  const st = useStore();
+  const p = st.progress;
+  const h = HEROES.find((x) => x.id === hero)!;
+  return (
+    <div class="hero-campaigns">
+      <div class="title big">{h.glyph} {h.hero.name}</div>
+      {PACKS.map((pk) => {
+        const list = SCENARIOS.filter((x) => packOf(x) === pk.id);
+        const n = list.filter((x) => beaten(p, hero, x.id)).length;
+        const saved = pk.campaign ? st.campaigns[pk.id] : undefined;
+        const by = saved?.completedBy?.[hero] ?? {};
+        const active = saved?.active?.heroes.includes(hero) ? saved.active : undefined;
+        return (
+          <section key={pk.id} class="hc-pack">
+            <div class="row"><span class="title grow">{pk.name}</span><span class={`pack-chip${n === list.length ? " full" : ""}`}>{n}/{list.length}</span></div>
+            {pk.campaign && (
+              <div class="small hc-camp">
+                {by.normal || by.experto
+                  ? <>🏆 Campaña completada: {[by.normal && `${by.normal}× Normal`, by.experto && `${by.experto}× Experto`].filter(Boolean).join(", ")}.</>
+                  : <>Campaña aún no completada.</>}
+                {active && <> En curso: misión {Math.min(active.step + 1, list.length)} de {list.length} ({active.difficulty === "experto" ? "Experto" : "Normal"}{active.heroes.length > 1 ? `, con ${active.heroes.filter((x) => x !== hero).map((x) => HEROES.find((y) => y.id === x)!.hero.name).join(", ")}` : ""}).</>}
+              </div>
+            )}
+            <ul class="hc-list">
+              {list.map((x) => {
+                const m = mark(p, hero, x.id);
+                const r = p[hero]?.[x.id] ?? {};
+                const stat = (["normal", "experto"] as const).flatMap((d) => r[d] && r[d]!.wins + r[d]!.losses ? [`${d === "normal" ? "Normal" : "Experto"} ${r[d]!.wins}V ${r[d]!.losses}D${r[d]!.bestRound ? ` (mejor: ${r[d]!.bestRound} r.)` : ""}`] : []);
+                return (
+                  <li key={x.id}>
+                    <span class={`pmark ${m.cls}`} aria-hidden="true">{m.icon}</span>
+                    <span class="grow"><b>{x.villain.name}</b> <span class="muted">· {x.name}</span><br /><span class="muted">{stat.length ? stat.join(" · ") : m.text}</span></span>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        );
+      })}
+    </div>
   );
 }
 
