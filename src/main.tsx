@@ -6,6 +6,7 @@ import { campaignById } from "./ui/campaign";
 import { PlayerCard } from "./ui/Card";
 import type { ScenarioDef } from "./engine/types";
 import { DeckViewer } from "./ui/DeckViewer";
+import { Album } from "./ui/Album";
 import { beaten, exportProgress, importProgress, resetProgress, tried, type Progress } from "./ui/progress";
 import { store, useStore } from "./ui/store";
 import { Modal, Portrait, Rules, Table } from "./ui/Table";
@@ -32,6 +33,7 @@ function Start() {
   const [rules, setRules] = useState(false);
   const [difficulty, setDifficulty] = useState<"normal" | "experto">("normal");
   const [deck, setDeck] = useState<string>();
+  const [album, setAlbum] = useState(false);
   const toggle = (id: string) => setHeroes(heroes.includes(id) ? heroes.filter((h) => h !== id) : heroes.length >= 2 ? [heroes[1], id] : [...heroes, id]);
   const sc = SCENARIOS.find((x) => x.id === scenario)!;
   return (
@@ -107,10 +109,12 @@ function Start() {
         {pk.campaign ? `Partida suelta: ${sc.name}` : heroes.length === 2 ? "Empezar a dos manos" : "Empezar en solitario"}
       </button>
       <button class="act ghost wide" onClick={() => setShowProgress(true)}>Progreso por héroe</button>
+      <button class="act ghost wide" onClick={() => setAlbum(true)}>Álbum de cartas</button>
       <button class="act ghost wide" onClick={() => setRules(true)}>Cómo se juega</button>
       {heroInfo && <Modal label="Progreso del héroe" onClose={() => setHeroInfo(undefined)}><HeroCampaigns hero={heroInfo} /><button class="act ghost wide" onClick={() => setHeroInfo(undefined)}>Cerrar</button></Modal>}
       {showProgress && <Modal wide label="Progreso" onClose={() => setShowProgress(false)}><ProgressTable p={p} /><button class="act ghost wide" onClick={() => setShowProgress(false)}>Cerrar</button></Modal>}
       {deck && <DeckViewer hero={HEROES.find((h) => h.id === deck)!} onClose={() => setDeck(undefined)} />}
+      {album && <Album onClose={() => setAlbum(false)} />}
       {rules && <Modal onClose={() => setRules(false)}><Rules /><button class="act ghost wide" onClick={() => setRules(false)}>Cerrar</button></Modal>}
     </main>
   );

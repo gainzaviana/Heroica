@@ -56,7 +56,7 @@ function cardsAccounted(s: GameState): number {
   for (const p of s.players) n += p.deck.length + p.hand.length + p.discard.length + p.play.length + p.engaged.length + (p.nemesis?.length ?? 0);
   // Player cards attached to allies, minions or the villain.
   for (const p of s.players) n += p.play.reduce((a, c) => a + (c.attached?.length ?? 0), 0) + p.engaged.reduce((a, m) => a + (m.attached?.length ?? 0), 0);
-  n += s.villain.playerAttached?.length ?? 0;
+  n += (s.villain.playerAttached?.length ?? 0) + (s.planAttached?.length ?? 0);
   return n;
 }
 
@@ -96,6 +96,7 @@ describe("Heroica engine", () => {
     act(s, { a: "flip", player: 0 });
     act(s, { a: "endTurn", player: 0, discard: [] });
     expect(s.phase).toBe("villano");
+    while (s.prompt?.kind === "optional") answer(s, "no"); // e.g. Golpe Anticipado against the boost
     expect(s.prompt?.kind).toBe("defense");
     const before = s.players[0].damage;
     answer(s, "hero");
@@ -125,9 +126,10 @@ describe("Vanguardia de Titanio vs. Mazagón (El Asalto al Arsenal)", () => {
   it("has a 40-card deck: 15 signature cards and 25 others", () => {
     const h = HEROES.find((x) => x.id === "vanguardia")!;
     expect(h.deck).toHaveLength(40);
-    const signature = ["guantelete-plasma", "visor-tactico", "nucleo-fusion", "propulsores-dorsales", "canon-hombro", "lumen-ia", "forja-tecnologica", "pulso-ionico", "impacto-supersonico"];
+    const signature = ["guantelete-plasma", "visor-tactico", "nucleo-fusion", "propulsores-dorsales", "coraza-titanio", "lumen-ia", "forja-tecnologica", "socio-salas", "pulso-ionico", "impacto-supersonico"];
     expect(h.deck.filter((id) => signature.includes(id))).toHaveLength(15);
-    expect(h.deck.filter((id) => PLAYER_CARDS.get(id)!.type === "recurso")).toHaveLength(6);
+    expect(h.deck.filter((id) => PLAYER_CARDS.get(id)!.aspect === "proteccion")).toHaveLength(14);
+    expect(h.deck.filter((id) => PLAYER_CARDS.get(id)!.type === "recurso")).toHaveLength(5);
   });
 
   it("hand size: 6 as Iria, 1 as Vanguardia +1 per Tecnología, up to 7", () => {
@@ -281,6 +283,7 @@ describe("Recursos, estados y combos", () => {
   /** A fresh game with Vanguardia in hero form and an empty hand (cards go back to the deck). */
   function setup(seed = 21) {
     const s = newGame(SC, ["vanguardia"], seed);
+    if (s.prompt) answer(s, s.prompt.options[0].id); // Soberano picks his starting upgrade
     const p = s.players[0];
     p.deck.push(...p.hand); p.hand = [];
     p.form = "heroe";
@@ -288,7 +291,9 @@ describe("Recursos, estados y combos", () => {
   }
   const copies = (s: GameState, def: string) => Object.keys(s.cards).filter((u) => s.cards[u] === def);
   function take(s: GameState, def: string, nth = 0): string {
-    const u = copies(s, def)[nth];
+    let u = copies(s, def)[nth];
+    // A card this hero's deck doesn't carry: add a copy to the game for the test.
+    if (!u) { u = `t${s.nextUid++}`; s.cards[u] = def; }
     const p = s.players[0];
     p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
     return u;
@@ -365,16 +370,16 @@ describe("Recursos, estados y combos", () => {
     }
   });
 
-  it("Pulso Iónico: 1 damage, then +2 per ⚡ (🌟 counts) among the top 5 cards, shown as a combo", () => {
+  it("Pulso Iónico: 1 damage, then +2 per printed ⚡ (not 🌟) among the top 5 cards, shown as a combo", () => {
     const { s, p } = setup();
     const card = toHand(s, "pulso-ionico");
-    const pay = [toHand(s, "golpe-certero"), toHand(s, "golpe-certero", 1)];
-    // ⚡⚡ + ⚡ + 🧠 + 🌟 + ✊  →  4 energy
+    const pay = [toHand(s, "golpe-certero")];
+    // ⚡⚡ + ⚡ + ✊ + 🌟 + ✊  →  3 printed energy
     onTop(s, ["celula-energia", "guantelete-plasma", "visor-tactico", "lumen-ia", "canon-hombro"]);
     act(s, { a: "play", player: 0, card, pay });
-    expect(s.villain.damage).toBe(1 + 8);
+    expect(s.villain.damage).toBe(1 + 6);
     expect(s.combo?.cards).toEqual(["celula-energia", "guantelete-plasma", "visor-tactico", "lumen-ia", "canon-hombro"]);
-    expect(s.combo?.text).toContain("+8");
+    expect(s.combo?.text).toContain("+6");
     expect(p.discard).toEqual(expect.arrayContaining(copies(s, "lumen-ia")));
   });
 
@@ -448,34 +453,34 @@ describe("Recursos, estados y combos", () => {
     answer(s, "main");
     expect(mainPlan(s).threat).toBe(2);
     s.players[0].play.find((c) => c.uid === visor)!.exhausted = false;
-    toPlay(s, "propulsores-dorsales");
+    const boots = toPlay(s, "propulsores-dorsales");
+    const mind = toHand(s, "chispa-genio");
+    act(s, { a: "useCard", player: 0, card: boots });
+    answer(s, mind); // Aéreo until the end of the phase
     act(s, { a: "useCard", player: 0, card: visor });
     expect(s.prompt).toBeNull();
     expect(mainPlan(s).threat).toBe(1);
     expect(s.plans.find((x) => x.uid === side)?.threat).toBe(3);
   });
 
-  it("Núcleo de Fusión needs a ⚡ card; Guantelete deals 2 if you pay ⚡, 1 if not", () => {
+  it("Núcleo de Fusión readies the hero; Guantelete deals 1, or 2 with Aéreo; Coraza gives +6 vida", () => {
     const { s, p } = setup();
     const core = toPlay(s, "nucleo-fusion");
     p.heroExhausted = true;
-    expect(act(s, { a: "useCard", player: 0, card: core })).toMatch(/Necesitas descartar una carta con ⚡/);
-    const cell = toHand(s, "celula-energia");
     act(s, { a: "useCard", player: 0, card: core });
-    expect(s.prompt?.options.map((o) => o.id)).toEqual([cell]); // no "don't pay" option
-    answer(s, cell);
     expect(p.heroExhausted).toBe(false);
-    expect(p.discard).toContain(cell);
+    expect(act(s, { a: "useCard", player: 0, card: core })).toBeDefined(); // exhausted
 
     const g = toPlay(s, "guantelete-plasma");
     act(s, { a: "useCard", player: 0, card: g });
-    answer(s, "no");
     expect(s.villain.damage).toBe(1);
     p.play.find((c) => c.uid === g)!.exhausted = false;
-    const g2 = toHand(s, "guantelete-plasma", 1);
+    p.tempTraits = ["aereo"];
     act(s, { a: "useCard", player: 0, card: g });
-    answer(s, g2);
     expect(s.villain.damage).toBe(3);
+    const vida = heroStats(s, 0).vidaMax;
+    toPlay(s, "coraza-titanio");
+    expect(heroStats(s, 0).vidaMax).toBe(vida + 6);
   });
 
   it("Persecución removes 3 after you defeat an enemy this turn, 1 otherwise; Botiquín heals a friend", () => {
@@ -502,6 +507,7 @@ describe("Recursos, estados y combos", () => {
 describe("Nuevos héroes, escenarios y fase del villano", () => {
   function setup(scenario: string, hero: string, form: "heroe" | "identidad" = "heroe", seed = 31, difficulty: "normal" | "experto" = "normal") {
     const s = newGame(scenario, [hero], seed, difficulty);
+    if (s.prompt) answer(s, s.prompt.options[0].id); // Soberano picks his starting upgrade
     const p = s.players[0];
     p.deck.push(...p.hand); p.hand = [];
     p.form = form;
@@ -509,7 +515,9 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
   }
   const copies = (s: GameState, def: string) => Object.keys(s.cards).filter((u) => s.cards[u] === def);
   function take(s: GameState, def: string, nth = 0): string {
-    const u = copies(s, def)[nth];
+    let u = copies(s, def)[nth];
+    // A card this hero's deck doesn't carry: add a copy to the game for the test.
+    if (!u) { u = `t${s.nextUid++}`; s.cards[u] = def; }
     const p = s.players[0];
     p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
     return u;
@@ -571,7 +579,7 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
     it("has 40 cards: 15 hers, 15 Liderazgo, 10 básicas", () => {
       const deck = HEROES.find((h) => h.id === "funambula")!.deck;
       expect(deck).toHaveLength(40);
-      expect(deck.filter((d) => PLAYER_CARDS.get(d)!.traits?.includes("liderazgo"))).toHaveLength(15);
+      expect(deck.filter((d) => PLAYER_CARDS.get(d)!.aspect === "liderazgo")).toHaveLength(15);
     });
 
     it("Dédalo keeps the 🧠 cards it discards; Patada Pendular deals 8", () => {
@@ -711,71 +719,92 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
     });
   });
 
-  it("Mole Tronante: hand discarded at the end of a hero turn; ✊ scaling cards", () => {
+  it("Mole Tronante: hand discarded at the end of a hero turn; cards paid only with ✊", () => {
     const { s, p } = setup("asalto-arsenal", "mole");
     expect([heroOf(p).hero.fuerza, heroOf(p).vida, handSize(s, 0)]).toEqual([3, 18, 4]);
     const card = toHand(s, "golpe-demoledor");
+    expect(act(s, { a: "play", player: 0, card, pay: [toHand(s, "chispa-genio")] })).toBeDefined(); // 🧠 can't pay for it
     act(s, { a: "play", player: 0, card, pay: [toHand(s, "furia-sin-limites")] });
-    expect(s.villain.damage).toBe(2 + 2);
+    expect(s.villain.damage).toBe(3); // as much as her Fuerza
     const m = s.encounterDeck.find((u) => s.cards[u] === "maton-sueldo")!;
     s.encounterDeck = s.encounterDeck.filter((u) => u !== m);
     p.engaged.push({ uid: m, def: "maton-sueldo", damage: 0 });
     const clap = toHand(s, "palmada-sismica");
     act(s, { a: "play", player: 0, card: clap, pay: [toHand(s, "pulso-fuerza"), toHand(s, "golpe-certero")] });
+    answer(s, "villain"); // then the other enemy
     expect(s.villain.damage).toBe(6);
-    expect(p.engaged[0].damage).toBe(2);
-    const rip = toHand(s, "arrancar-suelo");
-    toHand(s, "furia-sin-limites", 1); toHand(s, "golpe-demoledor", 1);
-    act(s, { a: "play", player: 0, card: rip, pay: [toHand(s, "vigilancia")] });
-    answer(s, "villain");
-    expect(s.villain.damage).toBe(6 + 1 + 3); // ✊✊ + ✊ left in hand
+    expect(p.engaged).toHaveLength(0);
+    const leap = toHand(s, "salto-suborbital");
+    mainPlan(s).threat = 6;
+    act(s, { a: "play", player: 0, card: leap, pay: [toHand(s, "furia-sin-limites", 1)] });
+    expect(mainPlan(s).threat).toBe(1); // 5: paid only with ✊
     const handBefore = p.hand.slice();
     act(s, { a: "endTurn", player: 0, discard: [] });
     expect(p.discard).toEqual(expect.arrayContaining(handBefore));
+    const x = setup("asalto-arsenal", "mole", "identidad");
+    const rage = toHand(x.s, "furia-sin-limites");
+    expect(act(x.s, { a: "play", player: 0, card: toHand(x.s, "vendaje-rapido"), pay: [rage] })).toBeDefined(); // worth nothing in identity form
   });
 
-  it("Centella: Canal de Energía stores ⚡ and releases 2 damage per charge; Recanalizar needs ⚡", () => {
+  it("Centella: Canal de Energía stores ⚡ and releases 2 damage per charge; Recanalizar needs ⚡; Interceptar la Crisis reaches 2 plans with Aéreo", () => {
     const { s, p } = setup("asalto-arsenal", "centella");
     expect(act(s, { a: "heroAbility", player: 0 })).toMatch(/Necesitas descartar una carta con ⚡/);
     const canal = toPlay(s, "canal-energia");
-    const cell = toHand(s, "pulso-cosmico");
+    const cell = toHand(s, "absorcion-energia");
     act(s, { a: "useCard", player: 0, card: canal, index: 0 });
     answer(s, cell);
-    expect(p.play.find((c) => c.uid === canal)?.counters).toBe(2);
+    expect(p.play.find((c) => c.uid === canal)?.counters).toBe(3);
     act(s, { a: "useCard", player: 0, card: canal, index: 1 });
-    expect(s.villain.damage).toBe(4);
+    expect(s.villain.damage).toBe(6);
     expect(p.discard).toContain(canal);
 
     p.damage = 3;
-    const bolt = toHand(s, "rafaga-fotonica");
+    const crisis = toHand(s, "interceptar-crisis");
     act(s, { a: "heroAbility", player: 0 });
-    answer(s, bolt);
+    answer(s, crisis);
     expect(p.damage).toBe(2);
+
+    const side = s.encounterDeck.find((u) => s.cards[u] === "caos-avenida")!;
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== side);
+    s.plans.push({ uid: side, def: "caos-avenida", threat: 4 });
+    mainPlan(s).threat = 5;
+    toPlay(s, "vuelo-cosmico");
+    act(s, { a: "play", player: 0, card: toHand(s, "interceptar-crisis", 1), pay: [toHand(s, "celula-energia")] });
+    answer(s, "main");
+    expect(mainPlan(s).threat).toBe(3);
+    expect(s.plans.find((x) => x.uid === side)?.threat).toBe(2); // the other plan, automatically
   });
 
-  it("Vuelo Cósmico can be used from play while defending", () => {
+  it("Vuelo Cósmico is discarded from play to prevent 3 while defending", () => {
     const { s, p } = setup("asalto-arsenal", "centella", "heroe", 33);
-    toPlay(s, "vuelo-cosmico");
+    const fly = toPlay(s, "vuelo-cosmico");
     villainTurn(s);
-    answer(s, "hero");
+    while (s.prompt?.kind === "optional" && !s.prompt.options.some((o) => o.id.startsWith("play:"))) answer(s, "no");
+    if (s.prompt?.kind === "defense") answer(s, "hero");
     expect(s.prompt?.options.some((o) => o.id.startsWith("play:"))).toBe(true);
     answer(s, s.prompt!.options.find((o) => o.id.startsWith("play:"))!.id);
-    expect(p.play.find((c) => s.cards[c.uid] === "vuelo-cosmico")?.exhausted).toBe(true);
+    expect(p.discard).toContain(fly);
   });
 
-  it("Soberano starts with Garras; ¡Por Oricalcia! fires every Oricalco upgrade, the primary one +1", () => {
+  it("Soberano picks an Oricalco upgrade at setup; ¡Por Oricalcia! fires every one, the last with its bonus", () => {
     const s0 = newGame("asalto-arsenal", ["soberano"], 34);
-    expect(s0.players[0].hand.map((u) => s0.cards[u])).toContain("garras-oricalco");
-    expect(s0.players[0].hand).toHaveLength(6);
+    const upgrades = ["dagas-oricalco", "garras-oricalco", "ordenador-tactico", "traje-reflectante"];
+    expect(s0.prompt?.options.length).toBeGreaterThan(0);
+    expect(s0.prompt!.options.every((o) => upgrades.includes(s0.cards[o.id]))).toBe(true);
+    const pick = s0.prompt!.options[0].id;
+    answer(s0, pick);
+    expect(s0.players[0].hand).toContain(pick);
+    expect(s0.players[0].hand).toHaveLength(7);
     const { s, p } = setup("asalto-arsenal", "soberano");
     const claws = toPlay(s, "garras-oricalco");
     toPlay(s, "ordenador-tactico");
+    expect(act(s, { a: "useCard", player: 0, card: claws })).toBeDefined(); // only through ¡Por Oricalcia!
     mainPlan(s).threat = 5;
     const ev = toHand(s, "por-oricalcia-f");
     act(s, { a: "play", player: 0, card: ev, pay: [toHand(s, "pulso-fuerza")] });
-    answer(s, claws); // primary: Garras (+1)
+    answer(s, claws); // Garras last: 2 + 2
     while (s.prompt) answer(s, s.prompt.options[0].id);
-    expect(s.villain.damage).toBe(3);
+    expect(s.villain.damage).toBe(4);
     expect(mainPlan(s).threat).toBe(4);
     expect(p.play.every((c) => !c.exhausted)).toBe(true);
   });
@@ -881,8 +910,8 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
     s.revealed = false;
     act(s, { a: "attack", player: 0 });
     expect(s.revealed).toBe(false);
-    const forge = toPlay(s, "forja-tecnologica");
-    act(s, { a: "useCard", player: 0, card: forge });
+    const hall = toPlay(s, "salon-guardia");
+    act(s, { a: "useCard", player: 0, card: hall });
     expect(s.revealed).toBe(true);
   });
 });
@@ -890,6 +919,7 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
 describe("Aliados con habilidad", () => {
   function setup(hero = "soberano", seed = 41) {
     const s = newGame("asalto-arsenal", [hero], seed);
+    if (s.prompt) answer(s, s.prompt.options[0].id); // Soberano picks his starting upgrade
     const p = s.players[0];
     p.deck.push(...p.hand); p.hand = [];
     p.form = "heroe";
@@ -907,18 +937,18 @@ describe("Aliados con habilidad", () => {
     for (const h of HEROES) for (const id of new Set(h.deck)) {
       const c = PLAYER_CARDS.get(id)!;
       if (!c.ally) continue;
-      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock || c.ally.onMinionEnters);
+      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock || c.ally.onMinionEnters || c.ally.attackDiscard);
       expect(has, `${h.id}: ${c.name}`).toBe(true);
     }
   });
 
-  it("after-thwart abilities: Lumen draws, the Mago confuses the villain", () => {
+  it("Lumen takes 2 damage to hit every enemy for 1; the Mago confuses the villain after thwarting", () => {
     const { s, p } = setup("vanguardia");
     mainPlan(s).threat = 5;
     const lumen = toPlay(s, "lumen-ia");
-    const hand = p.hand.length;
-    act(s, { a: "allyThwart", player: 0, ally: lumen });
-    expect(p.hand.length).toBe(hand + 1);
+    act(s, { a: "useCard", player: 0, card: lumen });
+    expect(s.villain.damage).toBe(1);
+    expect(p.play.find((c) => c.uid === lumen)).toMatchObject({ damage: 2, exhausted: true });
     const mago = toPlay(s, "mago-errante");
     act(s, { a: "allyThwart", player: 0, ally: mago });
     expect(s.villain.confused).toBe(true);
@@ -941,18 +971,18 @@ describe("Aliados con habilidad", () => {
     }
   });
 
-  it("enter-play and action abilities: Capitana readies allies, Coronel gives Duro, Zola heals without exhausting", () => {
+  it("enter-play abilities: Capitana readies allies, Coronel gives Duro, Zola finds an upgrade", () => {
     const { s, p } = setup("centella");
     const mage = toPlay(s, "mago-errante");
     p.play.find((c) => c.uid === mage)!.exhausted = true;
-    const cap = Object.keys(s.cards).find((x) => s.cards[x] === "capitana-fernandez")!;
+    const cap = Object.keys(s.cards).find((x) => s.cards[x] === "capitana-fernandez") ?? (() => { const u = `t${s.nextUid++}`; s.cards[u] = "capitana-fernandez"; return u; })();
     p.deck = p.deck.filter((x) => x !== cap); p.hand.push(cap);
     const pay = p.deck.splice(0, 4); p.hand.push(...pay);
     act(s, { a: "play", player: 0, card: cap, pay });
     expect(p.play.find((c) => c.uid === mage)?.exhausted).toBe(false);
 
     const x = setup("mole").s;
-    const ruiz = Object.keys(x.cards).find((u) => x.cards[u] === "coronel-ruiz")!;
+    const ruiz = Object.keys(x.cards).find((u) => x.cards[u] === "coronel-ruiz") ?? (() => { const u = `t${x.nextUid++}`; x.cards[u] = "coronel-ruiz"; return u; })();
     const q = x.players[0];
     q.deck = q.deck.filter((u) => u !== ruiz); q.hand.push(ruiz);
     const pay2 = q.deck.splice(0, 3); q.hand.push(...pay2);
@@ -960,13 +990,12 @@ describe("Aliados con habilidad", () => {
     expect(q.tough).toBe(true);
 
     const y = setup("soberano", 43);
-    y.p.damage = 4;
-    const zola = toPlay(y.s, "zola-ingeniera");
-    act(y.s, { a: "useCard", player: 0, card: zola });
-    if (y.s.prompt) answer(y.s, `hero:0`);
-    expect(y.p.damage).toBe(2);
-    expect(y.p.play.find((c) => c.uid === zola)?.exhausted).toBe(false);
-    expect(act(y.s, { a: "useCard", player: 0, card: zola })).toBe("Ya la usaste esta ronda.");
+    const zola = Object.keys(y.s.cards).find((u) => y.s.cards[u] === "zola-ingeniera")!;
+    y.p.deck = y.p.deck.filter((u) => u !== zola); y.p.hand = y.p.hand.filter((u) => u !== zola); y.p.hand.push(zola);
+    const pay3 = y.p.deck.filter((u) => pcard(y.s, u).type === "recurso").slice(0, 1); y.p.deck = y.p.deck.filter((u) => !pay3.includes(u)); y.p.hand.push(...pay3);
+    act(y.s, { a: "play", player: 0, card: zola, pay: pay3 });
+    if (y.s.prompt) answer(y.s, y.s.prompt.options[0].id);
+    expect(y.p.hand.some((u) => pcard(y.s, u).type === "mejora")).toBe(true); // Zola found an upgrade
   });
 });
 
@@ -1022,6 +1051,7 @@ describe("Progreso por héroe", () => {
 describe("Campaña: El Ascenso del Mariscal de Ceniza", () => {
   function setup(scenario: string, hero = "vanguardia", form: "heroe" | "identidad" = "heroe", seed = 41) {
     const s = newGame(scenario, [hero], seed);
+    if (s.prompt) answer(s, s.prompt.options[0].id); // Soberano picks his starting upgrade
     const p = s.players[0];
     p.deck.push(...p.hand); p.hand = [];
     p.form = form;
@@ -1064,7 +1094,7 @@ describe("Campaña: El Ascenso del Mariscal de Ceniza", () => {
     s.villain.attachments = [cannon];
     p.tough = true;
     // Coraza de Púas in play: Represalia that a ranged attacker ignores.
-    const spikes = Object.keys(s.cards).find((u) => s.cards[u] === "coraza-puas");
+    const spikes = Object.keys(s.cards).find((u) => s.cards[u] === "coraza-puas") ?? (() => { const u = `t${s.nextUid++}`; s.cards[u] = "coraza-puas"; return u; })();
     p.deck = p.deck.filter((u) => u !== spikes);
     p.play.push({ uid: spikes!, def: "coraza-puas", exhausted: false, damage: 0 });
     villainPhase(s);
@@ -1082,7 +1112,7 @@ describe("Campaña: El Ascenso del Mariscal de Ceniza", () => {
     s.sideDecks!.armas.push(...s.villain.attachments);
     s.sideDecks!.armas = s.sideDecks!.armas.filter((u) => u !== gloves);
     s.villain.attachments = [gloves];
-    const squire = p.deck.find((u) => s.cards[u] === "escudero-fiel")!;
+    const squire = p.deck.find((u) => s.cards[u] === "escudero-fiel") ?? (() => { const u = `t${s.nextUid++}`; s.cards[u] = "escudero-fiel"; return u; })();
     p.deck = p.deck.filter((u) => u !== squire);
     p.play.push({ uid: squire, def: "escudero-fiel", exhausted: false, damage: 2 }); // 1 life left
     act(s, { a: "endTurn", player: 0, discard: [] });
@@ -1196,3 +1226,361 @@ describe("Campaña: El Ascenso del Mariscal de Ceniza", () => {
     expect(c2.boons.vanguardia).toContain("sargento-brisa");
   });
 });
+
+describe("Vanguardia: mazo de Protección y cartas del álbum", () => {
+  function setup(form: "heroe" | "identidad" = "heroe", seed = 51) {
+    const s = newGame("asalto-arsenal", ["vanguardia"], seed);
+    if (s.prompt) answer(s, s.prompt.options[0].id); // Soberano picks his starting upgrade
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = form;
+    return { s, p };
+  }
+  function take(s: GameState, def: string, nth = 0): string {
+    let u = Object.keys(s.cards).filter((x) => s.cards[x] === def)[nth];
+    if (!u) { u = `t${s.nextUid++}`; s.cards[u] = def; }
+    const p = s.players[0];
+    p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
+    return u;
+  }
+  const toHand = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].hand.push(u); return u; };
+  const toPlay = (s: GameState, def: string, nth = 0) => {
+    const u = take(s, def, nth);
+    const c = PLAYER_CARDS.get(def)!;
+    s.players[0].play.push({ uid: u, def, exhausted: false, damage: 0, ...(c.uses !== undefined ? { counters: c.uses } : {}) });
+    return u;
+  };
+  const stack = (s: GameState, defs: string[]) => {
+    const out: string[] = [];
+    for (const d of defs) {
+      const u = [...s.encounterDeck, ...s.encounterDiscard].find((x) => s.cards[x] === d && !out.includes(x))!;
+      s.encounterDeck = s.encounterDeck.filter((x) => x !== u); s.encounterDiscard = s.encounterDiscard.filter((x) => x !== u);
+      out.push(u);
+    }
+    s.encounterDeck.unshift(...out);
+  };
+
+  it("Impacto Supersónico: 4, or 8 with Aéreo from the Propulsores (only this phase)", () => {
+    const { s, p } = setup();
+    act(s, { a: "play", player: 0, card: toHand(s, "impacto-supersonico"), pay: [toHand(s, "pulso-fuerza")] });
+    expect(s.villain.damage).toBe(4);
+    const boots = toPlay(s, "propulsores-dorsales");
+    const mind = toHand(s, "chispa-genio");
+    act(s, { a: "useCard", player: 0, card: boots });
+    answer(s, mind);
+    act(s, { a: "play", player: 0, card: toHand(s, "impacto-supersonico", 1), pay: [toHand(s, "celula-energia")] });
+    expect(s.villain.damage).toBe(12);
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    expect(p.tempTraits).toBeUndefined();
+  });
+
+  it("Bruno Salas pays with the top card of your discard; the Forja brings back a Tecnología upgrade", () => {
+    const { s, p } = setup("identidad");
+    const salas = toPlay(s, "socio-salas");
+    const cell = take(s, "celula-energia");
+    p.discard.push(cell);
+    const src = resourceSources(s, 0).find((r) => r.id === salas)!;
+    expect(src).toMatchObject({ res: "energia", amount: 2 });
+    expect(act(s, { a: "play", player: 0, card: toHand(s, "impacto-supersonico"), pay: [], extra: [salas] })).toBeDefined(); // identity can't play hero events
+    const helmet = take(s, "visor-tactico");
+    const vigor = take(s, "vigor");
+    p.discard.push(helmet, vigor);
+    act(s, { a: "useCard", player: 0, card: toPlay(s, "forja-tecnologica") });
+    expect(p.hand).toContain(helmet);
+  });
+
+  it("Lince cancels an encounter card and another is revealed; Tomás Roca enters Duro", () => {
+    const { s, p } = setup("identidad", 52);
+    const lynx = toPlay(s, "lince-espia");
+    toHand(s, "chispa-genio");
+    stack(s, ["emboscada", "avance-oscuro", "piel-acero"]); // boost, dealt, the replacement
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    while (s.prompt) {
+      const lynxOpt = s.prompt.options.find((o) => o.id === `ally:${lynx}`);
+      answer(s, lynxOpt?.id ?? s.prompt.options[s.prompt.options.length - 1].id);
+    }
+    expect(s.log.some((l) => l.text.includes("Lince, la Espía anula Avance Oscuro"))).toBe(true);
+    expect(s.log.some((l) => l.text.includes("Encuentro para Iria Montalbán: Piel de Acero"))).toBe(true);
+    expect(p.play.find((c) => c.uid === lynx)!.exhausted).toBe(true); // used: ready again at the end of your next turn
+
+    const x = setup("heroe", 53);
+    const rock = toHand(x.s, "tomas-roca");
+    act(x.s, { a: "play", player: 0, card: rock, pay: [toHand(x.s, "celula-energia"), toHand(x.s, "pulso-fuerza")] });
+    expect(x.p.play.find((c) => c.uid === rock)!.tough).toBe(true);
+  });
+
+  it("Golpe Anticipado cancels the boost and hits the villain; Ascua and the Campo Reflector answer an attack", () => {
+    const { s, p } = setup("heroe", 54);
+    toHand(s, "golpe-anticipado"); toHand(s, "pulso-fuerza");
+    toPlay(s, "ascua-guardiana"); toHand(s, "celula-energia");
+    const field = toPlay(s, "campo-reflector");
+    stack(s, ["arrollar"]); // ⭐⭐ boost
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    expect(s.prompt?.text).toMatch(/refuerzo/);
+    answer(s, s.prompt!.options[0].id); // Golpe Anticipado
+    expect(s.villain.damage).toBe(2);
+    expect(s.prompt?.kind).toBe("defense");
+    answer(s, "none");
+    // Interrupts, one after another: Ascua (pays ⚡) then the Campo Reflector.
+    const picks: string[] = [];
+    while (s.prompt?.kind === "optional" && s.prompt.text.includes("antes de recibir")) {
+      const o = s.prompt.options.find((x) => x.id.startsWith("play:") && !picks.includes(x.id)) ?? s.prompt.options[s.prompt.options.length - 1];
+      picks.push(o.id); answer(s, o.id);
+    }
+    expect(s.villain.damage).toBe(2 + 2 + 1);
+    expect(p.play.find((c) => c.uid === field)!.counters).toBe(2);
+    expect(p.damage).toBe(villainStats(s).fuerza - 1);
+  });
+
+  it("Firmeza doubles for Protección; Equipo de Sanadores heals 3 times then goes; básicas: Salón, Mente, Reflejos, Vigor, Pausa", () => {
+    const { s, p } = setup("heroe", 55);
+    const firm = toHand(s, "firmeza");
+    expect(act(s, { a: "play", player: 0, card: toHand(s, "golpe-anticipado"), pay: [firm] })).toBeDefined(); // not playable now anyway
+    const field = toHand(s, "campo-reflector");
+    expect(act(s, { a: "play", player: 0, card: field, pay: [firm] })).toBeUndefined(); // 🌟🌟 for a Protección card
+    const kit = toPlay(s, "equipo-sanadores");
+    for (let k = 0; k < 3; k++) {
+      p.damage = 5;
+      p.play.forEach((c) => (c.exhausted = false));
+      act(s, { a: "useCard", player: 0, card: kit });
+      if (s.prompt) answer(s, "hero:0");
+      expect(p.damage).toBe(3);
+    }
+    expect(p.play.some((c) => c.uid === kit)).toBe(false);
+    const hand = p.hand.length;
+    act(s, { a: "useCard", player: 0, card: toPlay(s, "salon-guardia") });
+    expect(p.hand.length).toBe(hand + 1);
+    toPlay(s, "mente-afilada"); toPlay(s, "reflejos-afilados");
+    expect(resourceSources(s, 0).map((r) => r.res).sort()).toEqual(["energia", "mental"]);
+    const vida = heroStats(s, 0).vidaMax;
+    toPlay(s, "vigor"); toPlay(s, "pausa-merecida");
+    expect(heroStats(s, 0)).toMatchObject({ vidaMax: vida + 3, recuperacion: 3 + 2 });
+  });
+});
+
+describe("Álbum de cartas", () => {
+  it("every MarvelCDB code in the album maps to a card or hero that exists, and shared cards live in the album", async () => {
+    const album = (await import("../data/album.json")).default as { heroes: Record<string, string>; cards: Record<string, string> };
+    for (const [code, id] of Object.entries(album.cards)) expect(PLAYER_CARDS.has(id), `${code} → ${id}`).toBe(true);
+    for (const [code, id] of Object.entries(album.heroes)) expect(HEROES.some((h) => h.id === id), `${code} → ${id}`).toBe(true);
+    const { ALBUM_CARDS } = await import("../data/roster/album");
+    const shared = new Set(ALBUM_CARDS.map((c) => c.id));
+    // Funámbula and Vanguardia share básicas from the album instead of duplicating them.
+    const f = HEROES.find((h) => h.id === "funambula")!.deck, v = HEROES.find((h) => h.id === "vanguardia")!.deck;
+    expect(f.filter((id) => v.includes(id) && shared.has(id))).toContain("aeronave-mando");
+  });
+});
+
+describe("Mazos de referencia", () => {
+  it("every hero deck matches its reference decklist card for card (counts included)", async () => {
+    const album = (await import("../data/album.json")).default as unknown as { cards: Record<string, string>; decks: Record<string, { hero: string; slots: Record<string, number> }> };
+    for (const [id, ref] of Object.entries(album.decks)) {
+      const want: Record<string, number> = {};
+      for (const [code, n] of Object.entries(ref.slots)) { const c = album.cards[code]; expect(c, `${id}: ${code}`).toBeDefined(); want[c] = (want[c] ?? 0) + n; }
+      const got: Record<string, number> = {};
+      for (const c of HEROES.find((h) => h.id === ref.hero)!.deck) got[c] = (got[c] ?? 0) + 1;
+      expect(got, `${ref.hero} (decklist ${id})`).toEqual(want);
+      expect(Object.values(got).reduce((a, n) => a + n, 0)).toBe(40);
+    }
+  });
+});
+
+describe("Centella, Mole y Soberano: cartas nuevas", () => {
+  function setup(hero: string, form: "heroe" | "identidad" = "heroe", seed = 61) {
+    const s = newGame("asalto-arsenal", [hero], seed);
+    if (s.prompt) answer(s, s.prompt.options[0].id);
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = form;
+    return { s, p };
+  }
+  function take(s: GameState, def: string, nth = 0): string {
+    let u = Object.keys(s.cards).filter((x) => s.cards[x] === def)[nth];
+    if (!u) { u = `t${s.nextUid++}`; s.cards[u] = def; }
+    const p = s.players[0];
+    p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
+    return u;
+  }
+  const toHand = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].hand.push(u); return u; };
+  const toPlay = (s: GameState, def: string, nth = 0) => {
+    const u = take(s, def, nth);
+    const c = PLAYER_CARDS.get(def)!;
+    s.players[0].play.push({ uid: u, def, exhausted: false, damage: 0, ...(c.uses !== undefined ? { counters: c.uses } : {}) });
+    return u;
+  };
+  const engage = (s: GameState, def = "maton-sueldo") => {
+    const m = s.encounterDeck.find((u) => s.cards[u] === def)!;
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== m);
+    s.players[0].engaged.push({ uid: m, def, damage: 0 });
+    return m;
+  };
+  const sidePlan = (s: GameState, threat: number) => {
+    const u = s.encounterDeck.find((x) => s.cards[x] === "caos-avenida")!;
+    s.encounterDeck = s.encounterDeck.filter((x) => x !== u);
+    s.plans.push({ uid: u, def: "caos-avenida", threat });
+    return u;
+  };
+
+  it("Guardia de Aurelia: Bastión and Torre raise the ally limit, the Torre discounts a Guardia ally, Insignia makes anyone Guardia", () => {
+    const { s, p } = setup("centella", "identidad");
+    for (const a of ["arquero-campanario", "automata-cristal", "nuez-picara"]) toPlay(s, a);
+    const vega = toHand(s, "comisaria-vega");
+    expect(canPlay(s, 0, vega)).toMatch(/3 aliados/);
+    toPlay(s, "bastion-consejo");
+    toHand(s, "pulso-fuerza");
+    expect(canPlay(s, 0, vega)).toBeUndefined();
+    const tower = toPlay(s, "torre-guardia");
+    expect(canPlay(s, 0, toHand(s, "vigia-alado"))).not.toMatch(/aliados/); // room for 5: all are Guardia
+    act(s, { a: "useCard", player: 0, card: tower });
+    expect(p.allyDiscount).toMatchObject({ trait: "guardia", amount: 1 });
+    act(s, { a: "play", player: 0, card: vega, pay: [p.hand.find((u) => s.cards[u] === "pulso-fuerza")!] });
+    expect(allyStats(s, p.play.find((c) => c.uid === vega)!).vida).toBe(2);
+    p.form = "heroe";
+    act(s, { a: "play", player: 0, card: toHand(s, "insignia-guardia"), pay: [] });
+    answer(s, vega);
+    const v = p.play.find((c) => c.uid === vega)!;
+    expect(allyStats(s, v).vida).toBe(3);
+    expect(v.attached).toHaveLength(1);
+  });
+
+  it("Vigía Alado scouts treacheries, Nuez hits every enemy, Okafor confuses the villain, Gedeón needs a discard to attack", () => {
+    const { s, p } = setup("centella", "identidad", 62);
+    mainPlan(s).threat = 5;
+    const treach = s.encounterDeck.filter((u) => ecardType(s, u) === "traicion").slice(0, 2);
+    const other = s.encounterDeck.find((u) => ecardType(s, u) !== "traicion")!;
+    s.encounterDeck = [...treach, other, ...s.encounterDeck.filter((u) => !treach.includes(u) && u !== other)];
+    act(s, { a: "play", player: 0, card: toHand(s, "vigia-alado"), pay: [toHand(s, "pulso-fuerza"), toHand(s, "celula-energia")] });
+    expect(mainPlan(s).threat).toBe(3);
+    const m = engage(s);
+    act(s, { a: "play", player: 0, card: toHand(s, "nuez-picara"), pay: [toHand(s, "chispa-genio")] });
+    expect(s.villain.damage).toBe(1);
+    expect(p.engaged.find((x) => x.uid === m)!.damage).toBe(1);
+    act(s, { a: "play", player: 0, card: toHand(s, "teniente-okafor"), pay: [toHand(s, "absorcion-energia")] });
+    expect(s.villain.confused).toBe(true);
+    const g = toPlay(s, "gedeon-rubi");
+    p.hand = [];
+    expect(act(s, { a: "allyAttack", player: 0, ally: g })).toMatch(/descarta una carta/);
+  });
+
+  it("¡Guardia, en Formación! readies and boosts the Guardia once per round; Unidos Somos Más draws per exhausted ally; the Esquife brings an ally", () => {
+    const { s, p } = setup("centella", "heroe", 63);
+    const a = toPlay(s, "arquero-campanario"), b = toPlay(s, "comisaria-vega");
+    p.play.forEach((c) => (c.exhausted = true)); p.heroExhausted = true;
+    act(s, { a: "play", player: 0, card: toHand(s, "guardia-formacion"), pay: [toHand(s, "absorcion-energia"), toHand(s, "pulso-fuerza")] });
+    expect(p.heroExhausted).toBe(false);
+    expect(p.play.find((c) => c.uid === a)!.exhausted).toBe(false); // Guardia
+    expect(p.play.find((c) => c.uid === b)!.exhausted).toBe(true); // not Guardia
+    expect(heroStats(s, 0).fuerza).toBe(3);
+    expect(canPlay(s, 0, toHand(s, "guardia-formacion", 1))).toMatch(/una vez por ronda/);
+    const hand = p.hand.length;
+    act(s, { a: "play", player: 0, card: toHand(s, "unidos-mas"), pay: [] });
+    answer(s, a);
+    expect(p.hand.length).toBe(hand + 1); // Unidos went to hand and was played; drew one
+    const x = setup("soberano", "heroe", 64);
+    const skiff = toPlay(x.s, "esquife-veloz");
+    x.p.play.find((c) => c.uid === skiff)!.counters = 2;
+    const nut = toHand(x.s, "nuez-picara");
+    act(x.s, { a: "useCard", player: 0, card: skiff });
+    answer(x.s, nut);
+    expect(x.p.play.some((c) => c.uid === nut)).toBe(true);
+    expect(x.p.discard).toContain(skiff);
+  });
+
+  it("Justicia: Patrulla stores threat and hits a minion with it; Despejar draws when it clears a plan; Olfato draws on a cleared side plan; Golpe Conmocionante", () => {
+    const { s, p } = setup("mole", "heroe", 65);
+    mainPlan(s).threat = 4;
+    const patrol = toPlay(s, "patrulla-barrio");
+    act(s, { a: "useCard", player: 0, card: patrol, index: 0 });
+    expect(mainPlan(s).threat).toBe(3);
+    expect(p.play.find((c) => c.uid === patrol)!.counters).toBe(1);
+    const m = engage(s);
+    p.play.find((c) => c.uid === patrol)!.exhausted = false;
+    act(s, { a: "useCard", player: 0, card: patrol, index: 1 });
+    expect(p.engaged.find((x) => x.uid === m)!.damage).toBe(1);
+    expect(p.discard).toContain(patrol);
+    toPlay(s, "olfato-detective");
+    const side = sidePlan(s, 2);
+    const hand = p.hand.length;
+    act(s, { a: "play", player: 0, card: toHand(s, "despejar-plaza"), pay: [toHand(s, "chispa-genio")] });
+    answer(s, side);
+    expect(s.plans.some((x) => x.uid === side)).toBe(false);
+    expect(p.hand.length).toBe(hand + 2); // Despejar + Olfato
+    act(s, { a: "play", player: 0, card: toHand(s, "golpe-conmocionante"), pay: [toHand(s, "furia-sin-limites")] });
+    answer(s, m);
+    expect(p.engaged.some((x) => x.uid === m)).toBe(false); // confused, then 3 damage (paid ✊)
+  });
+
+  it("Ojo Vigilante raises the plan limit; Contrainteligencia blocks 3 threat; Red de Informantes draws 2 on a surge; Agente Lucero finds Planificación; Rectitud doubles", () => {
+    const { s } = setup("mole", "identidad", 66);
+    const limit = planLimit(s);
+    act(s, { a: "play", player: 0, card: toHand(s, "ojo-vigilante"), pay: [toHand(s, "rectitud")] }); // 🌟🌟 for Justicia
+    expect(planLimit(s)).toBe(limit + 4);
+    toPlay(s, "contrainteligencia");
+    const t = mainPlan(s).threat;
+    villainTurnOnce(s);
+    expect(s.log.some((l) => l.text.includes("Contrainteligencia evita"))).toBe(true);
+    expect(mainPlan(s).threat).toBeLessThan(t + 4);
+    const y = setup("mole", "identidad", 67);
+    const ref = take(y.s, "contrainteligencia"); y.p.discard.push(ref);
+    act(y.s, { a: "play", player: 0, card: toHand(y.s, "agente-lucero"), pay: [toHand(y.s, "chispa-genio"), toHand(y.s, "pulso-fuerza")] });
+    if (y.s.prompt) answer(y.s, y.s.prompt.options.find((o) => y.s.cards[o.id] === "contrainteligencia")!.id);
+    expect(y.p.hand).toContain(ref);
+    expect(canPlay(y.s, 0, toHand(y.s, "red-informantes"))).toBeUndefined(); // Lucero is a Espía
+  });
+
+  it("Mole: Puño Cataclísmico +10 on the next basic attack; Fuerza Imparable draws only if paid ✊; Ira Creciente goes when she flips; Laboratorio; Investigación", () => {
+    const { s, p } = setup("mole", "heroe", 68);
+    act(s, { a: "play", player: 0, card: toHand(s, "puno-cataclismo"), pay: [toHand(s, "furia-sin-limites")] });
+    act(s, { a: "attack", player: 0 });
+    expect(s.villain.damage).toBe(13);
+    const hand = p.hand.length;
+    act(s, { a: "play", player: 0, card: toHand(s, "fuerza-imparable"), pay: [toHand(s, "chispa-genio")] });
+    expect(p.heroExhausted).toBe(false);
+    expect(p.hand.length).toBe(hand); // paid with 🧠: no draw
+    act(s, { a: "play", player: 0, card: toHand(s, "ira-creciente"), pay: [toHand(s, "pulso-fuerza")] });
+    expect(heroStats(s, 0).fuerza).toBe(4);
+    act(s, { a: "flip", player: 0 });
+    expect(p.play.some((c) => s.cards[c.uid] === "ira-creciente")).toBe(false);
+    toPlay(s, "laboratorio-gamma");
+    expect(heroStats(s, 0).recuperacion).toBe(6);
+    expect(resourceSources(s, 0).some((r) => r.res === "mental")).toBe(true);
+    const n = p.hand.length, d = p.discard.length;
+    act(s, { a: "identityAbility", player: 0 });
+    if (s.prompt) answer(s, s.prompt.options[0].id); // choose the card to discard
+    expect([p.hand.length, p.discard.length]).toEqual([n, d + 1]);
+  });
+
+  it("Soberano: Traje moves damage to an enemy, Dagas hit the villain and every minion; Hierba Ancestral recycles; Base Orbital draws 2 in identity", () => {
+    const { s, p } = setup("soberano", "heroe", 69);
+    p.damage = 3;
+    const m = engage(s);
+    for (const u of ["traje-reflectante", "dagas-oricalco"]) toPlay(s, u);
+    act(s, { a: "play", player: 0, card: toHand(s, "por-oricalcia-c"), pay: [toHand(s, "oricalco-puro")] });
+    answer(s, p.play.find((c) => s.cards[c.uid] === "dagas-oricalco")!.uid); // Dagas last: 2 each
+    answer(s, "villain"); // Traje: move 1 damage to the villain
+    expect(p.damage).toBe(2);
+    expect(s.villain.damage).toBe(1 + 2);
+    expect(p.engaged.find((x) => x.uid === m)!.damage).toBe(2);
+    p.form = "identidad";
+    const a = take(s, "pulso-fuerza"), b = take(s, "celula-energia");
+    p.discard.push(a, b);
+    act(s, { a: "play", player: 0, card: toHand(s, "hierba-ancestral"), pay: [toHand(s, "chispa-genio")] });
+    answer(s, a); answer(s, b); answer(s, "fin");
+    expect(p.deck).toEqual(expect.arrayContaining([a, b]));
+    const c = setup("centella", "identidad", 70);
+    const orb = toPlay(c.s, "base-orbital");
+    toHand(c.s, "vendaje-rapido");
+    const before = c.p.hand.length;
+    act(c.s, { a: "useCard", player: 0, card: orb });
+    answer(c.s, c.s.prompt!.options[0].id);
+    expect(c.p.hand.length).toBe(before - 1 + 2);
+  });
+});
+
+function ecardType(s: GameState, u: string) { return ENCOUNTER_CARDS.get(s.cards[u])!.type; }
+/** Ends the turn and resolves the villain phase answering "no" / the last option. */
+function villainTurnOnce(s: GameState) {
+  act(s, { a: "endTurn", player: 0, discard: [] });
+  let g = 0;
+  while (s.prompt && g++ < 30) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+}

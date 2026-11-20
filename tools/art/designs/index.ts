@@ -17,6 +17,11 @@ import { artCeniza3 } from "./art-ceniza-3";
 import { artCeniza4 } from "./art-ceniza-4";
 import { artFunambula1 } from "./art-funambula-1";
 import { artFunambula2 } from "./art-funambula-2";
+import { artAlbum1 } from "./art-album-1";
+import { artAlbum2 } from "./art-album-2";
+import { artAlbum3 } from "./art-album-3";
+import { artAlbum4 } from "./art-album-4";
+import { artAlbum5 } from "./art-album-5";
 
 /** Card art sculpts by art key (see tools/art/keys.ts). */
-export const ART: Record<string, Sculpt> = { ...personajes, ...villanos, ...cartasA, ...cartasB, ...encuentros, ...expansion, ...artHeroes, ...artAliados, ...artEsbirros, ...artEncuentros, ...artCartas1, ...artCartas2, ...artCeniza1, ...artCeniza2, ...artCeniza3, ...artCeniza4, ...artFunambula1, ...artFunambula2 };
+export const ART: Record<string, Sculpt> = { ...personajes, ...villanos, ...cartasA, ...cartasB, ...encuentros, ...expansion, ...artHeroes, ...artAliados, ...artEsbirros, ...artEncuentros, ...artCartas1, ...artCartas2, ...artCeniza1, ...artCeniza2, ...artCeniza3, ...artCeniza4, ...artFunambula1, ...artFunambula2, ...artAlbum1, ...artAlbum2, ...artAlbum3, ...artAlbum4, ...artAlbum5 };

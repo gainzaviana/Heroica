@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import {
-  abilitiesOf, allyCards, allyStats, attackerKeywords, canPlay, costOf, enemyAttachments, crisisActive, currentStage, ecard, enemiesFor, environmentDef, KEYWORD_NAME, resMatches, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
+  abilitiesOf, allyCards, allyLimit, allyStats, attackerKeywords, canPlay, costOf, enemyAttachments, crisisActive, currentStage, ecard, enemiesFor, environmentDef, KEYWORD_NAME, resMatches, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
   planLimit, planName, RES_ICON, resourcesOf, resourceSources, scenarioOf, stageList, villainStats,
 } from "../engine/game";
 import type { ResType } from "../engine/types";
@@ -216,12 +216,12 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
       <div class={`hero panel${p.heroExhausted ? " exhausted" : ""}${p.eliminated ? " fallen" : ""}`} style={{ ["--hero" as string]: h.colour }}>
         <Portrait artKey={`${hero ? "hero" : "identity"}-${h.id}`} glyph={hero ? h.glyph : "🙂"} />
         <div class="grow">
-          <div class="kicker">{hero ? "Forma de héroe" : "Identidad"}{p.heroExhausted ? " · agotado" : ""}</div>
+          <div class="kicker"><span class="form-tag">{hero ? "Héroe" : "Identidad"}</span>{p.heroExhausted ? "agotado" : ""}</div>
           <StatusChips st={p} />
           <div class="title">{hero ? h.hero.name : h.identity.name}</div>
           <Meter value={st.vidaMax - p.damage} max={st.vidaMax} kind="hp" label="Vida" />
           <div class="statline">
-            {hero ? <><span>⚔ Fuerza {st.fuerza}</span><span>✦ Ingenio {st.ingenio}</span><span>⛨ Aguante {st.aguante}</span></> : <span>✚ Recuperación {h.identity.recuperacion}</span>}
+            {hero ? <><span>⚔ Fuerza {st.fuerza}</span><span>✦ Ingenio {st.ingenio}</span><span>⛨ Aguante {st.aguante}</span></> : <span>✚ Recuperación {st.recuperacion}</span>}
             <span>✋ Mano {handSize(s, i)}</span>
           </div>
           <div class="muted small">{hero ? h.hero.text : h.identity.text}</div>
@@ -231,7 +231,7 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
         <div class="actions">
           {hero && <button class="act red" disabled={p.heroExhausted} onClick={() => store.act({ a: "attack", player: i })}>Atacar ({st.fuerza})</button>}
           {hero && <button class="act blue" disabled={p.heroExhausted} onClick={() => store.act({ a: "thwart", player: i })}>Contener ({st.ingenio})</button>}
-          {!hero && <button class="act green" disabled={p.heroExhausted || p.damage === 0} onClick={() => store.act({ a: "recover", player: i })}>Recuperar ({h.identity.recuperacion})</button>}
+          {!hero && <button class="act green" disabled={p.heroExhausted || p.damage === 0} onClick={() => store.act({ a: "recover", player: i })}>Recuperar ({st.recuperacion})</button>}
           {hero && ability?.timing === "action" && <button class="act gold" disabled={p.heroAbilityUsed} onClick={() => store.act({ a: "heroAbility", player: i })}>{ability.text}</button>}
           {!hero && h.identityAbility && <button class="act gold" disabled={!!p.identityAbilityUsed} onClick={() => store.act({ a: "identityAbility", player: i })}>{h.identityAbility.text}</button>}
           <button class="act ghost" disabled={p.flippedThisTurn} onClick={() => store.act({ a: "flip", player: i })}>{hero ? `Volver a ${h.identity.name}` : `Transformarse en ${h.hero.name}`}{!hero && currentStage(s).flipPunish ? ` (−${currentStage(s).flipPunish} vida)` : ""}</button>
@@ -248,7 +248,7 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
         {p.engaged.filter((m) => m.attached?.length).map((m) => <div key={m.uid} class="muted small">🕸 En {ENCOUNTER_CARDS.get(m.def)!.name}: {m.attached!.map((a) => pcard(s, a.uid).name).join(", ")}</div>)}
       </div>
       <div class="zone">
-        <div class="zone-title">Aliados ({allyCards(s, i).length}/3)</div>
+        <div class="zone-title">Aliados ({allyCards(s, i).length}/{allyLimit(s, i)})</div>
         <div class="cards">
           {allyCards(s, i).length === 0 && <div class="empty">Sin aliados.</div>}
           {allyCards(s, i).map((c) => <PlayerCard key={c.uid} def={pcard(s, c.uid)} size="sm" exhausted={c.exhausted} damage={c.damage} status={c} allyStats={allyStats(s, c)} onClick={() => onAlly(c.uid)} badge={c.counters !== undefined ? <span class="chip counters" title="Contadores">×{c.counters}</span> : undefined} />)}

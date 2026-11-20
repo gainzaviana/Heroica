@@ -20,16 +20,19 @@ guarda en el propio dispositivo después de cada acción.
 ## Contenido actual
 
 - **Héroes** (mazos de 40: 15 propias + 25 de su aspecto y básicas):
-  - **Vanguardia de Titanio** (Iria Montalbán, ingeniera) — Furia. Mano 1 en forma de héroe, +1 por cada mejora
-    Tecnología (máx. 7); combos que leen los recursos descartados (Pulso Iónico, Torvo).
+  - **Vanguardia de Titanio** (Iria Montalbán, ingeniera) — Protección. Mano 1 en forma de héroe, +1 por cada mejora
+    Tecnología (máx. 7); Propulsores que dan Aéreo durante la fase, Pulso Iónico que lee los ⚡ descartados, Campo
+    Reflector, Golpe Anticipado y aliados que anulan cartas de encuentro.
   - **Funámbula** (Lía Brenner, estudiante) — Liderazgo. Genera 🧠 en identidad; *Sexto sentido* roba cuando el villano
-    la ataca; aliados, Arenga, Toque de Reunión, Hacer la Llamada.
-  - **Mole Tronante** (Dra. Irene Volkova) — Furia. 18 de vida y 3 de Fuerza, mano de 4 que descarta entera al final de
-    cada turno de héroe; cartas que escalan con ✊ pagado o en la mano.
+    la ataca; Visión Periférica anula traiciones, Red Atrapante, Hilo Rastreador y aliados que se refuerzan.
+  - **Mole Tronante** (Dra. Irene Volkova) — Justicia. 18 de vida y 3 de Fuerza, mano de 4 que descarta entera al final
+    de cada turno de héroe; cartas que mejoran si las pagas solo con ✊ (Salto Suborbital, Puño Cataclísmico) y control
+    de planes (Patrulla del Barrio, Despejar la Plaza, Ojo Vigilante, Contrainteligencia).
   - **Centella Estelar** (Comandante Elena Saavedra) — Liderazgo. *Recanalizar* (⚡ → cura 1 y roba 1), *Al mando*
-    (roba 1), Canal de Energía que acumula cargas para una gran descarga.
-  - **Soberano de Oricalco** (Rey Adisa Mbeki) — Protección. Empieza con Garras de Oricalco; *¡Por Oricalcia!* activa
-    todas sus mejoras Oricalco a la vez; Represalia y cartas de defensa.
+    (un jugador roba 1); Vuelo Cósmico da Aéreo para Interceptar la Crisis en dos planes; Canal de Energía acumula
+    cargas; aliados de la Guardia de Aurelia.
+  - **Soberano de Oricalco** (Rey Adisa Mbeki) — Liderazgo. Elige una mejora Oricalco al empezar; *¡Por Oricalcia!*
+    resuelve las capacidades especiales de todas sus mejoras en secuencia (la última, más fuerte); Represalia 1.
 - **Escenarios** (Normal: fases I–II del villano; Experto: fases II–III y su conjunto Experto de 3 cartas):
   - *El Asalto al Arsenal* contra **Mazagón, el Titán Embestidor** (+ *Amenaza de Bomba*): golpea fuerte, trama poco.
   - *La Sinfonía Destructora* contra **Estruendo, el Maestro del Sonido** (+ *Liga Siniestra*): 2 cartas de refuerzo por
@@ -53,6 +56,27 @@ guarda en el propio dispositivo después de cada acción.
   fase del villano paso a paso con sus cartas de refuerzo, y deshacer de un solo paso.
 - **Arte:** las cartas básicas tienen ilustración 3D (toon) en `src/assets/art/*.webp`; el resto muestra su símbolo hasta
   que se le haga un diseño.
+
+## Álbum de cartas
+
+Cada carta muestra su procedencia en el marco y en dos etiquetas: el tipo (ALIADO, EVENTO, MEJORA, APOYO, RECURSO) y el
+aspecto, con su color: Furia (rojo), Justicia (amarillo), Protección (verde), Liderazgo (azul), Básica (gris) y las
+cartas propias de cada héroe en su color. Las de encuentro son moradas (esbirros, vínculos, planes) o naranjas
+(traiciones y obligaciones). Los aliados marcan con ✱ el daño que reciben al atacar o contener.
+
+Las cartas de aspecto (Liderazgo, Protección…) y las básicas están una sola vez en
+`src/data/roster/album.ts`, y cualquier mazo las reutiliza: Funámbula y Vanguardia comparten, por ejemplo, la Aeronave
+de Mando y los recursos dobles. En el juego, **Álbum de cartas** muestra todas las cartas y qué mazos usan cada una.
+
+`src/data/album.json` relaciona cada código de carta de MarvelCDB con la carta de Heroica que juega igual. Para montar
+un mazo nuevo a partir de una lista pública:
+
+```sh
+NODE_USE_ENV_PROXY=1 node tools/album.mjs https://es.marvelcdb.com/decklist/view/510/...
+```
+
+Muestra qué cartas ya están en el álbum (se reutilizan tal cual) y cuáles faltan, con su texto. Las que faltan se
+crean con nombre, texto y arte propios, y se añaden a `album.json`.
 
 ## Arte de las cartas
 

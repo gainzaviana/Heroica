@@ -1,7 +1,8 @@
 import { ENCOUNTER_CARDS, PLAYER_CARDS } from "../data/content";
 import type { HeroDef, PlayerCardDef, PlayerCardType } from "../engine/types";
 import { RES_ICON, RES_NAME } from "../engine/game";
-import { EncounterCard, PlayerCard, ResIcons, traitName, typeName } from "./Card";
+import { aspectLabel, ASPECT_NAME, EncounterCard, frameColour, PlayerCard, ResIcons, traitName, typeName } from "./Card";
+import type { Aspect } from "../engine/types";
 import { Modal, Portrait } from "./Table";
 
 const GROUPS: { type: PlayerCardType; title: string }[] = [
@@ -11,6 +12,8 @@ const GROUPS: { type: PlayerCardType; title: string }[] = [
   { type: "evento", title: "Eventos" },
   { type: "recurso", title: "Recursos" },
 ];
+
+const ASPECT_COLOUR: Record<Aspect, string> = { heroe: "#8a6d3b", agresion: "#dc2626", justicia: "#ca8a04", proteccion: "#16a34a", liderazgo: "#2563eb", basica: "#64748b", campana: "#9a6b3a" };
 
 const TIMING: Record<string, string> = { action: "Acción", defend: "Al defenderte", afterAttack: "Después de un ataque", afterUpgrade: "Después de jugar una mejora", villainAttack: "Respuesta, cuando el villano te ataca" };
 
@@ -30,6 +33,12 @@ export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => vo
         <div class="grow">
           <div class="kicker">Mazo · {hero.deck.length} cartas · {resSummary(hero.deck)}</div>
           <div class="title">{h.name}</div>
+          <div class="deck-summary">
+            {(["heroe", "agresion", "justicia", "proteccion", "liderazgo", "basica", "campana"] as Aspect[]).map((asp) => {
+              const n = hero.deck.filter((id) => (PLAYER_CARDS.get(id)!.aspect ?? "basica") === asp).length;
+              return n ? <span key={asp} class={`chip aspect-chip asp-${asp}`} style={{ ["--tcol" as string]: asp === "heroe" ? hero.colour : ASPECT_COLOUR[asp] }}>{asp === "heroe" ? h.name : ASPECT_NAME[asp]} {n}</span> : null;
+            })}
+          </div>
           <div class="deck-summary">
             {GROUPS.map((g) => {
               const n = hero.deck.filter((id) => PLAYER_CARDS.get(id)!.type === g.type).length;
@@ -105,7 +114,7 @@ function resSummary(deck: string[]): string {
   return [["energia", "⚡"], ["mental", "🧠"], ["fisico", "✊"], ["comodin", "🌟"]].filter(([k]) => n[k]).map(([k, i]) => `${i}${n[k]}`).join(" ");
 }
 
-function DeckRow({ def, count }: { def: PlayerCardDef; count: number }) {
+export function DeckRow({ def, count, note }: { def: PlayerCardDef; count?: number; note?: string }) {
   const traits = def.traits?.map(traitName).join(", ");
   return (
     <li class="deck-row">
@@ -113,9 +122,10 @@ function DeckRow({ def, count }: { def: PlayerCardDef; count: number }) {
       <div class="deck-info">
         <div class="row">
           <span class="strong grow">{def.name}</span>
-          <span class="qty" aria-label={`${count} copias`}>×{count}</span>
+          {count !== undefined && <span class="qty" aria-label={`${count} copias`}>×{count}</span>}
         </div>
         <div class="muted small">
+          <span class="chip aspect-chip" style={{ ["--tcol" as string]: frameColour(def) ?? ASPECT_COLOUR[def.aspect ?? "basica"] }}>{aspectLabel(def)}</span>{" "}
           {typeName(def.type)}{traits ? ` · ${traits}` : ""}
           {def.type !== "recurso" && ` · Coste ${def.cost}`}
         </div>
@@ -127,6 +137,7 @@ function DeckRow({ def, count }: { def: PlayerCardDef; count: number }) {
           </div>
         )}
         <p class="small">{def.text}</p>
+        {note && <div class="muted small album-note">{note}</div>}
       </div>
     </li>
   );

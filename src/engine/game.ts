@@ -71,7 +71,7 @@ export function allyStats(s: GameState, c: CardInPlay) {
     ...a,
     fuerza: a.fuerza + (c.buff?.fuerza ?? 0) + (c.temp?.fuerza ?? 0) + att("fuerza"),
     ingenio: a.ingenio + (c.buff?.ingenio ?? 0) + (c.temp?.ingenio ?? 0) + att("ingenio"),
-    vida: a.vida + (c.buff?.vida ?? 0),
+    vida: a.vida + (c.buff?.vida ?? 0) + (c.attached ?? []).reduce((n, u) => n + (pcard(s, u).attachBonus?.vida ?? 0), 0),
   };
 }
 
@@ -86,8 +86,8 @@ function leavePlay(s: GameState, i: number, uid: string) {
 
 /** Is this player card attached to an ally, a minion or the villain? */
 function isAttached(s: GameState, uid: string): boolean {
-  if (s.villain.playerAttached?.some((a) => a.uid === uid)) return true;
-  return s.players.some((p) => p.play.some((c) => c.attached?.includes(uid)) || p.engaged.some((m) => m.attached?.some((a) => a.uid === uid)));
+  if (s.villain.playerAttached?.some((a) => a.uid === uid) || s.planAttached?.some((a) => a.uid === uid)) return true;
+  return s.players.some((p) => p.play.some((c) => c.uid === uid || c.attached?.includes(uid)) || p.engaged.some((m) => m.attached?.some((a) => a.uid === uid)));
 }
 
 /** The player cards attached to an enemy (the villain or a minion). */
@@ -98,15 +98,51 @@ export function enemyAttachments(s: GameState, id: string): PlayerAttachment[] {
 
 /** A card's cost for this player now (an Aeronave discount lowers the next one). */
 export function costOf(s: GameState, i: number, uid: string): number {
-  return Math.max(0, pcard(s, uid).cost - (s.players[i].discount ?? 0));
+  const p = s.players[i], c = pcard(s, uid);
+  const ally = p.allyDiscount && c.ally && c.traits?.includes(p.allyDiscount.trait) ? p.allyDiscount.amount : 0;
+  return Math.max(0, c.cost - (p.discount ?? 0) - ally);
 }
+
+/** How many allies a player can control: 3, plus supports that raise it. */
+export function allyLimit(s: GameState, i: number): number {
+  const p = s.players[i];
+  const allies = p.play.filter((c) => pcard(s, c.uid).ally);
+  let n = 3;
+  for (const c of p.play) {
+    const d = pcard(s, c.uid);
+    n += d.allyLimit ?? 0;
+    if (d.allyLimitIfAll && allies.every((a) => allyTraits(s, a).includes(d.allyLimitIfAll!))) n += 1;
+  }
+  return n;
+}
+const allyCount = (s: GameState, i: number) => s.players[i].play.filter((c) => pcard(s, c.uid).ally).length;
+
+/** An ally's traits, with those granted by attached cards (Insignia de la Guardia). */
+export function allyTraits(s: GameState, c: CardInPlay): string[] {
+  return [...(pcard(s, c.uid).traits ?? []), ...(c.attached ?? []).flatMap((u) => pcard(s, u).attachGrants ?? [])];
+}
+/** The hero's printed traits (hero form) plus Insignia-style grants on the hero. */
+export function heroTraits(s: GameState, i: number): string[] {
+  const p = s.players[i];
+  if (p.form !== "heroe") return [];
+  return [...(heroOf(p).heroTraits ?? []), ...p.play.flatMap((c) => pcard(s, c.uid).ally ? [] : pcard(s, c.uid).attachGrants ?? [])];
+}
+/** Do you control a character (hero or ally) with this trait? */
+export const controlsTrait = (s: GameState, i: number, trait: string) => heroTraits(s, i).includes(trait) || s.players[i].play.some((c) => pcard(s, c.uid).ally && allyTraits(s, c).includes(trait));
 
 /** What a card in hand is worth when paying for another (Don de Mando doubles for Liderazgo cards). */
 export function payValue(s: GameState, payUid: string, forUid?: string): number {
   const c = pcard(s, payUid);
-  const double = !!c.doubleFor && !!forUid && !!pcard(s, forUid).traits?.includes(c.doubleFor);
+  if (c.heroFormOnly && s.players.some((p) => p.form !== "heroe" && p.hand.includes(payUid))) return 0;
+  const target = forUid ? pcard(s, forUid) : undefined;
+  if (target?.payOnly && !resMatches(c.resType, target.payOnly)) return 0;
+  const double = !!c.doubleFor && !!target && (target.aspect === c.doubleFor || !!target.traits?.includes(c.doubleFor));
   return c.resources * (double ? 2 : 1);
 }
+/** A card or ability that asks for a resource type ("any": any card). */
+const payMatch = (printed: ResType, want: ResType | "any") => want === "any" || resMatches(printed, want);
+/** Everything paid was of this type (Comodín counts). */
+const paidOnly = (ctx: EffectCtx, res: ResType) => Object.entries(ctx.paid ?? {}).every(([k, n]) => !n || k === res || k === "comodin");
 const playersAlive = (s: GameState) => s.players.filter((p) => !p.eliminated).length;
 const playerCount = (s: GameState) => s.players.length;
 
@@ -120,11 +156,15 @@ export function heroName(s: GameState, i: number): string {
 export function heroStats(s: GameState, i: number) {
   const p = s.players[i];
   const h = heroOf(p);
-  const st = { fuerza: h.hero.fuerza, ingenio: h.hero.ingenio, aguante: h.hero.aguante, vidaMax: h.vida };
+  const st = { fuerza: h.hero.fuerza, ingenio: h.hero.ingenio, aguante: h.hero.aguante, vidaMax: h.vida, recuperacion: h.identity.recuperacion };
   for (const c of p.play) {
     const b = pcard(s, c.uid).bonus;
     if (!b) continue;
-    st.fuerza += b.fuerza ?? 0; st.ingenio += b.ingenio ?? 0; st.aguante += b.aguante ?? 0; st.vidaMax += b.vidaMax ?? 0;
+    st.fuerza += b.fuerza ?? 0; st.ingenio += b.ingenio ?? 0; st.aguante += b.aguante ?? 0; st.vidaMax += b.vidaMax ?? 0; st.recuperacion += b.recuperacion ?? 0;
+  }
+  for (const c of p.play) {
+    const bt = pcard(s, c.uid).bonusIfTrait;
+    if (bt && traitCount(s, i, bt.trait) > 0) { st.fuerza += bt.bonus.fuerza ?? 0; st.ingenio += bt.bonus.ingenio ?? 0; st.aguante += bt.bonus.aguante ?? 0; }
   }
   st.fuerza += p.temp?.fuerza ?? 0; st.ingenio += p.temp?.ingenio ?? 0;
   return st;
@@ -139,7 +179,8 @@ export function handSize(s: GameState, i: number): number {
 }
 
 /** How many of this player's cards in play have a trait (armour pieces, …). */
-export const traitCount = (s: GameState, i: number, trait: string) => s.players[i].play.filter((c) => pcard(s, c.uid).traits?.includes(trait)).length;
+export const traitCount = (s: GameState, i: number, trait: string) =>
+  s.players[i].play.filter((c) => pcard(s, c.uid).traits?.includes(trait)).length + (s.players[i].tempTraits?.includes(trait) ? 1 : 0);
 
 /** The villain stages used this game, as indexes into the scenario's stages. */
 export function stageList(s: GameState): number[] {
@@ -218,7 +259,7 @@ export function mainPlanDef(s: GameState): MainPlanDef {
   return [sc.mainPlan, ...(sc.nextPlans ?? [])][s.mainStage ?? 0];
 }
 export const mainPlanStages = (s: GameState) => 1 + (scenarioOf(s).nextPlans?.length ?? 0);
-export const planLimit = (s: GameState) => mainPlanDef(s).limitePorJugador * playerCount(s);
+export const planLimit = (s: GameState) => mainPlanDef(s).limitePorJugador * playerCount(s) + (s.planAttached ?? []).reduce((a, x) => a + (pcard(s, x.uid).planLimitBonus ?? 0), 0);
 
 // MARK: Setup
 
@@ -268,6 +309,10 @@ export function newGame(scenarioID: string, heroIDs: string[], seed = Date.now()
   log(s, `${sc.villain.name} amenaza Aurelia. ${s.players.map((_, i) => heroOf(s.players[i]).hero.name).join(" y ")} acuden a la llamada.`);
   for (const p of s.players) if (p.damage) log(s, `${heroOf(p).hero.name} arrastra ${p.damage} daño de la misión anterior.`);
   s.villainQueue = [];
+  startTurn(s, 0);
+  // Heroes that choose a starting card (Soberano: an Oricalco upgrade).
+  const tut = s.players.findIndex((p) => heroOf(p).setupTutor);
+  if (tut >= 0) { const t = heroOf(s.players[tut]).setupTutor!; runEffects(s, tut, [{ do: "tutor", ...t }], 0, { sourceName: heroOf(s.players[tut]).identity.name }); s.revealed = false; }
   return s;
 }
 
@@ -293,6 +338,8 @@ function checkEnd(s: GameState): boolean {
     const done = mainPlanDef(s);
     if ((s.mainStage ?? 0) + 1 >= mainPlanStages(s)) { finish(s, "derrota", `${done.name} se ha completado. ${done.text}`); return true; }
     s.mainStage = (s.mainStage ?? 0) + 1;
+    for (const a of s.planAttached ?? []) { s.players[a.owner].discard.push(a.uid); log(s, `${pcard(s, a.uid).name} se descarta con la fase del plan.`); }
+    s.planAttached = [];
     const next = mainPlanDef(s);
     mainPlan(s).threat = next.inicioPorJugador * playerCount(s);
     log(s, `¡${done.name} se completa! El plan avanza a su fase ${s.mainStage + 1}: ${next.name} (${mainPlan(s).threat} amenaza, límite ${planLimit(s)}).`);
@@ -443,26 +490,41 @@ function thwartPlan(s: GameState, uid: string, amount: number, player = s.active
   const plan = s.plans.find((p) => p.uid === uid);
   if (!plan || amount <= 0) return;
   if (plan.def === "main" && crisisActive(s)) { log(s, `Crisis: no puedes retirar amenaza de ${planName(s, plan)} mientras haya un plan con Crisis.`); return; }
+  const before = plan.threat;
   plan.threat = Math.max(0, plan.threat - amount);
   const name = planName(s, plan);
   log(s, `Retiras ${amount} amenaza de ${name}.`);
+  lastThwart = { plan: uid, cleared: before > 0 && plan.threat === 0 };
   if (plan.def !== "main" && plan.threat === 0) {
     s.plans = s.plans.filter((p) => p !== plan);
     toDiscard(s, plan.uid);
     log(s, `${name} queda frustrado.`);
     if (s.captives?.plan === plan.uid) rescue(s, player);
+    // Responses to a side plan being cleared (Olfato de Detective).
+    s.players.forEach((q, k) => {
+      if (q.form !== "heroe" || q.eliminated) return;
+      for (const c of q.play) {
+        const fx = pcard(s, c.uid).onSidePlanCleared;
+        if (!fx || c.exhausted) continue;
+        c.exhausted = true;
+        log(s, `${pcard(s, c.uid).name}: ${heroName(s, k)} aprovecha la pista.`);
+        runEffects(s, k, fx, 0, { source: c.uid, sourceName: pcard(s, c.uid).name });
+      }
+    });
   }
 }
+/** The plan the last thwart hit, and whether that removed its last threat. */
+let lastThwart: { plan: string; cleared: boolean } | undefined;
 
 /** Clearing the captives' plan: each captured ally joins this player (in play if there's room, else to the hand). */
 function rescue(s: GameState, i: number) {
   const p = s.players[i];
   for (const uid of s.captives?.cards ?? []) {
-    const allies = p.play.filter((c) => pcard(s, c.uid).ally).length;
-    if (allies < 3) p.play.push({ uid, def: s.cards[uid], exhausted: false, damage: 0 });
+    const room = allyCount(s, i) < allyLimit(s, i);
+    if (room) p.play.push({ uid, def: s.cards[uid], exhausted: false, damage: 0 });
     else p.hand.push(uid);
     (s.rescued ??= []).push({ uid, player: i });
-    log(s, `¡${pcard(s, uid).name} es rescatado y se une a ${heroName(s, i)}${allies < 3 ? "" : " (a tu mano)"}!`);
+    log(s, `¡${pcard(s, uid).name} es rescatado y se une a ${heroName(s, i)}${room ? "" : " (a tu mano)"}!`);
   }
   s.captives = { plan: "", cards: [] };
 }
@@ -471,6 +533,19 @@ export const planName = (s: GameState, p: PlanState) => (p.def === "main" ? main
 function addThreat(s: GameState, uid: string, amount: number) {
   const plan = s.plans.find((p) => p.uid === uid);
   if (!plan || amount <= 0) return;
+  if (plan.def === "main") {
+    // Contrainteligencia: discard it to prevent some of that threat.
+    for (const [k, q] of s.players.entries()) {
+      const c = q.play.find((x) => pcard(s, x.uid).guardMainPlan);
+      if (!c) continue;
+      const n = Math.min(amount, pcard(s, c.uid).guardMainPlan!);
+      leavePlay(s, k, c.uid);
+      log(s, `${pcard(s, c.uid).name} evita ${n} amenaza sobre el plan principal (se descarta).`);
+      amount -= n;
+      break;
+    }
+    if (amount <= 0) return;
+  }
   plan.threat += amount;
   log(s, `${planName(s, plan)} gana ${amount} amenaza.`);
   const sp = plan.def !== "main" ? ecard(s, plan.uid).sidePlan : undefined;
@@ -512,9 +587,11 @@ function optionsFor(s: GameState, i: number, t: Target, ctx?: EffectCtx): { id: 
     case "mainPlan": return [{ id: "main", label: planName(s, mainPlan(s)) }];
     case "self": return [{ id: `hero:${i}`, label: heroName(s, i) }];
     case "lastTarget": return ctx?.lastTarget && (ctx.lastTarget === "villain" || refFromID(s, ctx.lastTarget)) ? [{ id: ctx.lastTarget, label: enemyName(s, ctx.lastTarget) }] : [];
-    case "chooseOtherEnemy": return enemiesFor(s, i, true).filter((r) => refID(r) !== ctx?.lastTarget).map((r) => ({ id: refID(r), label: enemyName(s, refID(r)), detail: enemyDetail(s, refID(r)) }));
+    case "chooseOtherEnemy": return enemiesFor(s, i, true).filter((r) => refID(r) !== ctx?.lastTarget && !ctx?.hit?.includes(refID(r))).map((r) => ({ id: refID(r), label: enemyName(s, refID(r)), detail: enemyDetail(s, refID(r)) }));
     case "chooseAlly": return s.players[i].play.filter((c) => pcard(s, c.uid).ally).map((c) => ({ id: c.uid, label: pcard(s, c.uid).name }));
     case "thisCard": return ctx?.source && s.players[i].play.some((c) => c.uid === ctx.source) ? [{ id: ctx.source, label: pcard(s, ctx.source).name }] : [];
+    case "chooseOtherPlan": return s.plans.filter((p) => p.uid !== ctx?.lastPlan && !(p.def === "main" && crisisActive(s))).map((p) => ({ id: p.uid, label: planName(s, p), detail: `${p.threat} amenaza` }));
+    case "chooseHandCard": return s.players[i].hand.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text }));
     case "choosePlayer": return s.players.map((q, k) => ({ q, k })).filter((x) => !x.q.eliminated).map(({ k }) => ({ id: `hero:${k}`, label: heroName(s, k) }));
     case "bestPlan": {
       const open = s.plans.filter((p) => !(p.def === "main" && crisisActive(s)));
@@ -538,20 +615,22 @@ function enemyDetail(s: GameState, id: string): string {
 }
 
 /** Runs effects from `index`, pausing with a prompt when a choice is needed. */
-/** The effects of each upgrade's first ability, the primary one first and boosted. */
-function triggerAllEffects(s: GameState, uids: string[], primary: string, bonus: number): Effect[] {
-  const order = [primary, ...uids.filter((u) => u !== primary)];
+/** The effects of each upgrade's first ability, in sequence; the chosen one goes last with its last-step bonus. */
+function triggerAllEffects(s: GameState, uids: string[], last: string, bonus: number): Effect[] {
+  const order = [...uids.filter((u) => u !== last), last];
   return order.flatMap((u) => {
-    const fx = abilitiesOf(pcard(s, u))[0].effects;
-    if (u !== primary) return fx;
+    const ab = abilitiesOf(pcard(s, u))[0];
+    if (u !== last) return ab.effects;
+    const extra = ab.lastBonus ?? bonus;
     let done = false;
-    return fx.map((e) => {
-      if (done || !("amount" in e) || typeof e.amount !== "number") return e;
+    return ab.effects.map((e) => {
+      if ((done && !ab.lastBonusAll) || !("amount" in e) || typeof e.amount !== "number") return e;
       done = true;
-      return { ...e, amount: e.amount + bonus } as Effect;
+      return { ...e, amount: e.amount + extra } as Effect;
     });
   });
 }
+const triggerable = (s: GameState, c: CardInPlay, trait: string) => !!pcard(s, c.uid).traits?.includes(trait) && ["action", "special"].includes(abilitiesOf(pcard(s, c.uid))[0]?.timing ?? "");
 
 function runEffects(s: GameState, i: number, effects: Effect[], index = 0, ctx: EffectCtx = {}, source?: string): boolean {
   for (let k = index; k < effects.length; k++) {
@@ -583,11 +662,68 @@ function runEffects(s: GameState, i: number, effects: Effect[], index = 0, ctx: 
       return false;
     }
     if (e.do === "triggerAll") {
-      const ups = s.players[i].play.filter((c) => pcard(s, c.uid).traits?.includes(e.trait) && abilitiesOf(pcard(s, c.uid))[0]?.timing === "action");
+      const ups = s.players[i].play.filter((c) => triggerable(s, c, e.trait));
       if (!ups.length) { log(s, "No tienes mejoras que activar."); continue; }
       if (ups.length === 1) { effects = [...effects.slice(0, k), ...triggerAllEffects(s, ups.map((c) => c.uid), ups[0].uid, e.primaryBonus), ...effects.slice(k + 1)]; k--; continue; }
-      setPrompt(s, { player: i, kind: "target", text: `Se activan todas tus mejoras. ¿Cuál es la principal (+${e.primaryBonus})?`, options: ups.map((c) => ({ id: c.uid, label: pcard(s, c.uid).name, detail: abilitiesOf(pcard(s, c.uid))[0].text })), resume: { r: "effects", player: i, effects, index: k, source, ctx } });
+      setPrompt(s, { player: i, kind: "target", text: "Se activan todas tus mejoras, una tras otra. ¿Cuál resuelves la última? (gana su bonificación)", options: ups.map((c) => ({ id: c.uid, label: pcard(s, c.uid).name, detail: abilitiesOf(pcard(s, c.uid))[0].text })), resume: { r: "effects", player: i, effects, index: k, source, ctx } });
       return false;
+    }
+    if (e.do === "tutor") {
+      const p = s.players[i];
+      const fits = (u: string) => (!e.type || pcard(s, u).type === e.type) && (!e.trait || !!pcard(s, u).traits?.includes(e.trait));
+      const pool = [...p.deck, ...(e.discard ? p.discard : [])].filter(fits);
+      const seen = new Set<string>();
+      const opts = pool.filter((u) => !seen.has(s.cards[u]) && seen.add(s.cards[u]));
+      s.revealed = true;
+      if (!opts.length) { log(s, "No hay ninguna carta así que buscar."); shuffle(s, p.deck); continue; }
+      if (opts.length === 1) { applyEffect(s, i, e, opts[0], ctx); continue; }
+      setPrompt(s, { player: i, kind: "target", text: "¿Qué carta buscas para tu mano?", options: opts.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text })), resume: { r: "effects", player: i, effects, index: k, source, ctx } });
+      return false;
+    }
+    if (e.do === "recycle") {
+      const p = s.players[i];
+      if (ctx.stopRecycle || !p.discard.length) continue;
+      setPrompt(s, { player: i, kind: "target", text: "¿Qué carta de tu descarte vuelve a tu mazo?", options: [...p.discard.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text })), { id: "fin", label: "Ya está" }], resume: { r: "effects", player: i, effects, index: k, source, ctx } });
+      return false;
+    }
+    if (e.do === "scoutEncounter") {
+      const top = s.encounterDeck.slice(0, e.amount);
+      s.revealed = true;
+      const n = top.filter((u) => ecard(s, u).type === "traicion").length;
+      log(s, `${ctx.sourceName ?? "Exploración"}: mira ${top.map((u) => ecard(s, u).name).join(", ") || "nada"} · ${n} traición${n === 1 ? "" : "es"}.`);
+      effects = [...effects.slice(0, k), ...(n ? [{ do: "thwart", target: "choosePlan", amount: n } as Effect] : []), ...effects.slice(k + 1)];
+      k--;
+      continue;
+    }
+    if (e.do === "exhaustAlliesDraw") {
+      const ready = s.players[i].play.filter((c) => pcard(s, c.uid).ally && !c.exhausted);
+      if (!ready.length) { log(s, "No tienes aliados preparados que agotar."); continue; }
+      setPrompt(s, { player: i, kind: "target", text: "¿Qué aliados agotas? (robas 1 carta por cada uno)", options: [
+        ...(ready.length > 1 ? [{ id: "all", label: `Todos (${ready.length}): roba ${ready.length}` }] : []),
+        ...ready.map((c) => ({ id: c.uid, label: `Solo ${pcard(s, c.uid).name}: roba 1` })),
+      ], resume: { r: "effects", player: i, effects, index: k, source, ctx } });
+      return false;
+    }
+    if (e.do === "quinjet") {
+      const p = s.players[i];
+      const c = p.play.find((x) => x.uid === ctx.source);
+      const max = c?.counters ?? 0;
+      const opts = allyCount(s, i) < allyLimit(s, i) ? p.hand.filter((u) => pcard(s, u).ally && pcard(s, u).traits?.includes(e.trait) && pcard(s, u).cost <= max) : [];
+      if (!opts.length) { log(s, `No tienes en la mano ningún aliado de la Guardia de coste ${max} o menos.`); if (c) c.exhausted = false; continue; }
+      setPrompt(s, { player: i, kind: "target", text: `¿Qué aliado traes en ${pcard(s, ctx.source!).name}? (coste ${max} o menos, gratis)`, options: opts.map((u) => ({ id: u, label: `${pcard(s, u).name} (coste ${pcard(s, u).cost})`, detail: pcard(s, u).text })), resume: { r: "effects", player: i, effects, index: k, source, ctx } });
+      return false;
+    }
+    if (e.do === "ifHeroTrait") {
+      if (traitCount(s, i, e.trait) > 0 || heroTraits(s, i).includes(e.trait)) { effects = [...effects.slice(0, k), ...e.effects, ...effects.slice(k + 1)]; k--; }
+      continue;
+    }
+    if (e.do === "ifForm") {
+      if (s.players[i].form === e.form) { effects = [...effects.slice(0, k), ...e.effects, ...effects.slice(k + 1)]; k--; }
+      continue;
+    }
+    if (e.do === "ifCleared") {
+      if (ctx.cleared) { effects = [...effects.slice(0, k), ...e.effects, ...effects.slice(k + 1)]; k--; }
+      continue;
     }
     if (e.do === "choose") {
       setPrompt(s, { player: i, kind: "target", text: e.text, options: e.options.map((o, n) => ({ id: String(n), label: o.label })), resume: { r: "effects", player: i, effects, index: k, source, ctx } });
@@ -619,13 +755,16 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
   switch (e.do) {
     case "damage": {
       const upgraded = p.play.some((c) => pcard(s, c.uid).type === "mejora");
-      const amount = (upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount)
+      const rawAmount = (upgraded && e.ifUpgrade ? e.ifUpgrade : e.amount)
         + (e.plusTrait ? traitCount(s, i, e.plusTrait) : 0)
         + (e.paidBonus && paidHas(ctx, e.paidBonus.res) ? e.paidBonus.amount : 0)
         + (e.traitBonus && traitCount(s, i, e.traitBonus.trait) > 0 ? e.traitBonus.amount : 0)
         + (e.perPaid ? e.perPaid.amount * ((ctx.paid?.[e.perPaid.res] ?? 0) + (e.perPaid.res === "comodin" ? 0 : ctx.paid?.comodin ?? 0)) : 0)
         + (e.perHeld ? e.perHeld.amount * p.hand.reduce((a, u) => a + (resMatches(pcard(s, u).resType, e.perHeld!.res) ? pcard(s, u).resources : 0), 0) : 0)
-        + (e.perCounter ? e.perCounter * (p.play.find((c) => c.uid === ctx.source)?.counters ?? 0) : 0);
+        + (e.perCounter ? e.perCounter * (p.play.find((c) => c.uid === ctx.source)?.counters ?? 0) : 0)
+        + (e.fromStat ? heroStats(s, i)[e.fromStat] : 0)
+        + (e.onlyPaidBonus && paidOnly(ctx, e.onlyPaidBonus.res) ? e.onlyPaidBonus.amount : 0);
+      const amount = e.max !== undefined ? Math.min(e.max, rawAmount) : rawAmount;
       if (e.target === "allEnemies") {
         damageEnemy(s, "villain", amount);
         for (const q of s.players) for (const m of [...q.engaged]) damageEnemy(s, m.uid, amount);
@@ -649,6 +788,7 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
       if (!target) break;
       if (e.stun) giveStatus(s, target, "stunned");
       ctx.lastTarget = target;
+      (ctx.hit ??= []).push(target);
       const retaliate = ctx.basic && target !== "villain" ? ENCOUNTER_CARDS.get(s.cards[target])?.minion?.retaliate ?? 0 : 0;
       const r = damageEnemy(s, target, amount);
       ctx.killed = r.defeated;
@@ -656,16 +796,27 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
         log(s, `Represalia de ${ENCOUNTER_CARDS.get(s.cards[target])!.name}: ${retaliate} daño a quien le atacó.`);
         if (ctx.basic === "hero") damageHero(s, i, retaliate); else damageAlly(s, i, ctx.basic!, retaliate);
       }
-      if (r.excess > 0 && e.overkillIfPaid && paidHas(ctx, e.overkillIfPaid) && target !== "villain" && !s.result) {
+      if (r.excess > 0 && ((e.overkillIfPaid && paidHas(ctx, e.overkillIfPaid)) || ctx.overkill) && target !== "villain" && !s.result) {
         log(s, `Arrollador: ${r.excess} daño sobrante pasa al villano.`);
         damageEnemy(s, "villain", r.excess);
       }
       break;
     }
     case "thwart": {
-      const amount = e.amount + (e.paidBonus && paidHas(ctx, e.paidBonus.res) ? e.paidBonus.amount : 0) + (e.bonusIfDefeated && (p.defeatedThisTurn ?? 0) > 0 ? e.bonusIfDefeated : 0);
+      const amount = e.amount + (e.paidBonus && paidHas(ctx, e.paidBonus.res) ? e.paidBonus.amount : 0) + (e.bonusIfDefeated && (p.defeatedThisTurn ?? 0) > 0 ? e.bonusIfDefeated : 0)
+        + (e.onlyPaidBonus && paidOnly(ctx, e.onlyPaidBonus.res) ? e.onlyPaidBonus.amount : 0);
       if (e.allIfTrait && traitCount(s, i, e.allIfTrait) > 0) { for (const plan of [...s.plans]) thwartPlan(s, plan.uid, amount, i); break; }
+      lastThwart = undefined;
+      const before = s.plans.find((x) => x.uid === target)?.threat ?? 0;
       thwartPlan(s, target!, amount, i);
+      if (e.toSource) {
+        const moved = before - (s.plans.find((x) => x.uid === target)?.threat ?? 0);
+        const c = p.play.find((x) => x.uid === ctx.source);
+        if (c && moved > 0) { c.counters = (c.counters ?? 0) + moved; log(s, `${pcard(s, c.uid).name} guarda ${moved} amenaza (${c.counters}).`); }
+      }
+      ctx.lastPlan = target;
+      const lt = lastThwart as { plan: string; cleared: boolean } | undefined;
+      ctx.cleared = !!lt && lt.plan === target && lt.cleared;
       break;
     }
     case "addThreat": addThreat(s, target!, e.amount); break;
@@ -676,7 +827,8 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
     }
     case "draw":
       if (e.each) s.players.forEach((q, k) => { if (!q.eliminated) drawCards(s, k, e.amount); });
-      else if (!e.ifPaid || paidHas(ctx, e.ifPaid)) drawCards(s, i, e.amount);
+      else if (target?.startsWith("hero:")) drawCards(s, Number(target.slice(5)), e.amount);
+      else if ((!e.ifPaid || paidHas(ctx, e.ifPaid)) && (!e.ifOnlyPaid || paidOnly(ctx, e.ifOnlyPaid))) drawCards(s, i, e.amount);
       break;
     case "millTake": {
       if (refillDeck(s, i, e.amount)) break;
@@ -723,14 +875,111 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
     }
     case "discount": {
       const k = target?.startsWith("hero:") ? Number(target.slice(5)) : i;
-      s.players[k].discount = (s.players[k].discount ?? 0) + e.amount;
-      log(s, `La próxima carta que juegue ${heroName(s, k)} en esta fase cuesta ${e.amount} menos.`);
+      if (e.allyTrait) {
+        s.players[k].allyDiscount = { trait: e.allyTrait, amount: (s.players[k].allyDiscount?.amount ?? 0) + e.amount };
+        log(s, `El próximo aliado de la Guardia que juegue ${heroName(s, k)} en esta fase cuesta ${e.amount} menos.`);
+      } else {
+        s.players[k].discount = (s.players[k].discount ?? 0) + e.amount;
+        log(s, `La próxima carta que juegue ${heroName(s, k)} en esta fase cuesta ${e.amount} menos.`);
+      }
+      break;
+    }
+    case "tutor": {
+      if (!target) break;
+      const from = p.deck.includes(target) ? "deck" : "discard";
+      p[from] = p[from].filter((u) => u !== target);
+      p.hand.push(target);
+      shuffle(s, p.deck);
+      log(s, `${heroName(s, i)} busca ${pcard(s, target).name} y la añade a su mano.`);
+      break;
+    }
+    case "recycle": {
+      if (!target) break;
+      if (target === "fin") { ctx.stopRecycle = true; break; }
+      p.discard = p.discard.filter((u) => u !== target);
+      p.deck.push(target);
+      shuffle(s, p.deck);
+      log(s, `${pcard(s, target).name} vuelve del descarte al mazo.`);
+      break;
+    }
+    case "exhaustAlliesDraw": {
+      const ready = p.play.filter((c) => pcard(s, c.uid).ally && !c.exhausted && (target === "all" || c.uid === target));
+      for (const c of ready) c.exhausted = true;
+      log(s, `${heroName(s, i)} agota ${ready.map((c) => pcard(s, c.uid).name).join(", ")} y roba ${ready.length}.`);
+      drawCards(s, i, ready.length);
+      break;
+    }
+    case "quinjet": {
+      if (!target || !p.hand.includes(target)) break;
+      p.hand = p.hand.filter((u) => u !== target);
+      p.play.push({ uid: target, def: s.cards[target], exhausted: false, damage: 0, ...(pcard(s, target).uses !== undefined ? { counters: pcard(s, target).uses } : {}) });
+      log(s, `${pcard(s, target).name} llega en ${pcard(s, ctx.source!).name}.`);
+      const onPlay = pcard(s, target).onPlay;
+      if (ctx.source) leavePlay(s, i, ctx.source);
+      if (onPlay) runEffects(s, i, onPlay, 0, { source: target, sourceName: pcard(s, target).name });
+      break;
+    }
+    case "rally": {
+      const mine = p.play.filter((c) => pcard(s, c.uid).ally && allyTraits(s, c).includes(e.trait));
+      if (heroTraits(s, i).includes(e.trait)) p.heroExhausted = false;
+      for (const c of mine) c.exhausted = false;
+      s.players.forEach((q, k) => {
+        if (heroTraits(s, k).includes(e.trait)) q.temp = { fuerza: (q.temp?.fuerza ?? 0) + 1, ingenio: (q.temp?.ingenio ?? 0) + 1 };
+        for (const c of q.play) if (pcard(s, c.uid).ally && allyTraits(s, c).includes(e.trait)) c.temp = { fuerza: (c.temp?.fuerza ?? 0) + 1, ingenio: (c.temp?.ingenio ?? 0) + 1 };
+      });
+      log(s, `¡La Guardia se reúne! Se preparan ${[heroTraits(s, i).includes(e.trait) ? heroName(s, i) : "", ...mine.map((c) => pcard(s, c.uid).name)].filter(Boolean).join(", ") || "nadie"}, y toda la Guardia obtiene +1 Fuerza y +1 Ingenio esta fase.`);
+      break;
+    }
+    case "nextAttackBonus": {
+      p.nextAttack = { bonus: e.amount, overkill: !!e.overkillIfOnly && paidOnly(ctx, e.overkillIfOnly) };
+      log(s, `El próximo ataque básico de ${heroName(s, i)} este turno tendrá +${e.amount} Fuerza${p.nextAttack.overkill ? " y arrollará (el daño sobrante pasa al villano)" : ""}.`);
+      break;
+    }
+    case "moveDamage": {
+      const n = Math.min(e.amount, p.damage);
+      if (!target || !n) { log(s, "No hay daño que trasladar."); break; }
+      p.damage -= n;
+      log(s, `${heroName(s, i)} traslada ${n} daño a ${enemyName(s, target)}.`);
+      ctx.lastTarget = target;
+      damageEnemy(s, target, n);
+      break;
+    }
+    case "discardFromHand": {
+      if (!target || !p.hand.includes(target)) break;
+      p.hand = p.hand.filter((u) => u !== target);
+      p.discard.push(target);
+      log(s, `${heroName(s, i)} descarta ${pcard(s, target).name}.`);
+      break;
+    }
+    case "ifHeroTrait": case "ifForm": case "ifCleared": case "scoutEncounter": break; // handled by runEffects
+    case "spendCounter": {
+      const c = ctx.source ? p.play.find((x) => x.uid === ctx.source) : undefined;
+      if (!c) break;
+      c.counters = Math.max(0, (c.counters ?? 0) - 1);
+      if (c.counters === 0) { leavePlay(s, i, c.uid); log(s, `${pcard(s, c.uid).name} se queda sin usos y se descarta.`); }
+      break;
+    }
+    case "gainTrait": {
+      if (!p.tempTraits?.includes(e.trait)) (p.tempTraits ??= []).push(e.trait);
+      log(s, `${heroName(s, i)} obtiene ${e.trait === "aereo" ? "Aéreo" : e.trait} hasta el final de la fase.`);
+      break;
+    }
+    case "recoverTrait": {
+      const k = target?.startsWith("hero:") ? Number(target.slice(5)) : i;
+      const q = s.players[k];
+      const idx = [...q.discard].reverse().findIndex((u) => pcard(s, u).type === "mejora" && pcard(s, u).traits?.includes(e.trait));
+      if (idx < 0) { log(s, "No hay ninguna mejora de ese tipo en el descarte."); break; }
+      const uid = q.discard.splice(q.discard.length - 1 - idx, 1)[0];
+      q.hand.push(uid);
+      log(s, `${pcard(s, uid).name} vuelve del descarte a la mano de ${heroName(s, k)}.`);
       break;
     }
     case "attachSelf": {
       const uid = ctx.source;
       if (!uid || !target) break;
       if (target === "villain") (s.villain.playerAttached ??= []).push({ uid, owner: i });
+      else if (target === "main") (s.planAttached ??= []).push({ uid, owner: i });
+      else if (target.startsWith("hero:")) { p.play.push({ uid, def: s.cards[uid], exhausted: false, damage: 0 }); log(s, `${pcard(s, uid).name} queda vinculada a ${heroName(s, i)}.`); break; }
       else {
         const m = findMinion(s, target);
         const ally = p.play.find((x) => x.uid === target);
@@ -738,7 +987,7 @@ function applyEffect(s: GameState, i: number, e: Effect, target: string | undefi
         else if (ally) (ally.attached ??= []).push(uid);
         else break;
       }
-      log(s, `${pcard(s, uid).name} queda vinculada a ${target === "villain" || findMinion(s, target) ? enemyName(s, target) : pcard(s, target).name}.`);
+      log(s, `${pcard(s, uid).name} queda vinculada a ${target === "main" ? planName(s, mainPlan(s)) : target === "villain" || findMinion(s, target) ? enemyName(s, target) : pcard(s, target).name}.`);
       break;
     }
     case "addCounter": {
@@ -959,7 +1208,7 @@ function mill(s: GameState, i: number, e: Extract<Effect, { do: "mill" }>, ctx: 
   log(s, `${ctx.sourceName ?? "Efecto"}: descarta ${shown.join(", ") || "nada"}.`);
   const results: string[] = [];
   if (e.damagePer) {
-    const n = top.reduce((a, u) => a + (resMatches(pcard(s, u).resType, e.damagePer!.res) ? pcard(s, u).resources : 0), 0);
+    const n = top.reduce((a, u) => a + ((e.damagePer!.exact ? pcard(s, u).resType === e.damagePer!.res : resMatches(pcard(s, u).resType, e.damagePer!.res)) ? pcard(s, u).resources : 0), 0);
     const dmg = n * e.damagePer.amount;
     results.push(n ? `${n} ${RES_ICON[e.damagePer.res]} → +${dmg} daño` : `Ningún ${RES_ICON[e.damagePer.res]}: sin daño extra`);
     if (dmg) runEffects(s, i, [{ do: "damage", target: "lastTarget", amount: dmg }], 0, ctx);
@@ -979,6 +1228,16 @@ function mill(s: GameState, i: number, e: Extract<Effect, { do: "mill" }>, ctx: 
 }
 
 function surge(s: GameState, i: number) {
+  // Red de Informantes: discard it when a surge resolves.
+  for (const [k, q] of s.players.entries()) {
+    const c = q.play.find((x) => pcard(s, x.uid).onSurge);
+    if (!c) continue;
+    const fx = pcard(s, c.uid).onSurge!;
+    leavePlay(s, k, c.uid);
+    log(s, `${pcard(s, c.uid).name}: la oleada no pilla a ${heroName(s, k)} por sorpresa.`);
+    runEffects(s, k, fx);
+    break;
+  }
   const next = takeEncounter(s);
   if (next) s.villainQueue.unshift({ s: "reveal", player: i, card: next });
 }
@@ -1004,7 +1263,7 @@ function resume(s: GameState, r: Resume, option: string) {
     case "effects": {
       const e = r.effects[r.index];
       if (e.do === "triggerAll") {
-        const ups = s.players[r.player].play.filter((c) => pcard(s, c.uid).traits?.includes(e.trait) && abilitiesOf(pcard(s, c.uid))[0]?.timing === "action").map((c) => c.uid);
+        const ups = s.players[r.player].play.filter((c) => triggerable(s, c, e.trait)).map((c) => c.uid);
         const rest = [...triggerAllEffects(s, ups, option, e.primaryBonus), ...r.effects.slice(r.index + 1)];
         if (runEffects(s, r.player, rest, 0, r.ctx ?? {}, r.source)) afterEffects(s, r.player, r.source);
         return;
@@ -1034,18 +1293,47 @@ function resume(s: GameState, r: Resume, option: string) {
       runEffects(s, r.player, ability.effects, 0, { paid, source, sourceName: name });
       return;
     }
-    case "treachery": {
+    case "encounter": {
       const p = s.players[r.player];
       const def = ecard(s, r.card);
+      if (option.startsWith("ally:")) {
+        const c = p.play.find((x) => x.uid === option.slice(5));
+        const ab = c && abilitiesOf(pcard(s, c.uid)).find((x) => x.timing === "encounter");
+        if (c && ab) {
+          if (ab.cost === "exhaust") c.exhausted = true;
+          const pay = ab.payFor ? payOne(s, r.player, ab.payFor) : undefined;
+          toDiscard(s, r.card);
+          log(s, `${pcard(s, c.uid).name} anula ${def.name}${pay ? ` (paga con ${pcard(s, pay).name})` : ""} y se muestra otra carta.`);
+          surge(s, r.player);
+          return;
+        }
+      }
       if (option !== "no" && p.hand.includes(option)) {
         const c = pcard(s, option);
         const pay = autoPay(s, r.player, costOf(s, r.player, option), option) ?? [];
         p.hand = p.hand.filter((u) => u !== option && !pay.includes(u));
         p.discard.push(...pay, option);
+        s.encounterDiscard.push(r.card);
         log(s, `${heroName(s, r.player)} juega ${c.name}${pay.length ? ` (paga con ${pay.map((u) => pcard(s, u).name).join(", ")})` : ""}: ¡${def.name} no tiene efecto!`);
         return;
       }
-      resolveTreachery(s, r.player, r.card);
+      resolveReveal(s, r.player, r.card);
+      return;
+    }
+    case "boost": {
+      const p = s.players[r.player];
+      let boost = r.boost;
+      if (option !== "no" && p.hand.includes(option)) {
+        const c = pcard(s, option);
+        const pay = autoPay(s, r.player, costOf(s, r.player, option), option) ?? [];
+        p.hand = p.hand.filter((u) => u !== option && !pay.includes(u));
+        p.discard.push(...pay, option);
+        log(s, `${heroName(s, r.player)} juega ${c.name}: anula ${boost} ⭐ de refuerzo y devuelve ${boost} daño al villano.`);
+        boost = 0;
+        damageEnemy(s, "villain", r.boost);
+        if (checkEnd(s)) return;
+      }
+      villainStrike(s, r.player, r.base, boost);
       return;
     }
     case "villainStep": return;
@@ -1064,8 +1352,7 @@ function afterEffects(s: GameState, i: number, source?: string) {
 
 /** Allies in any player's discard this player can pay for and bring into play. */
 function reviveOptions(s: GameState, i: number, source?: string): string[] {
-  const p = s.players[i];
-  if (p.play.filter((c) => pcard(s, c.uid).type === "aliado").length >= 3) return [];
+  if (allyCount(s, i) >= allyLimit(s, i)) return [];
   const self = source?.startsWith("event:") ? source.slice(6) : "";
   return s.players.flatMap((q) => q.discard).filter((u) => pcard(s, u).ally && autoPay(s, i, pcard(s, u).cost, self, u));
 }
@@ -1075,6 +1362,8 @@ function attachAllowed(s: GameState, i: number, source: string | undefined, targ
   const uid = source?.startsWith("event:") ? source.slice(6) : source;
   if (!uid) return true;
   const def = s.cards[uid];
+  if (target === "main") return !(s.planAttached ?? []).some((a) => s.cards[a.uid] === def);
+  if (target.startsWith("hero:")) return !s.players[Number(target.slice(5))].play.some((c) => c.def === def);
   if (target === "villain" || findMinion(s, target)) return !enemyAttachments(s, target).some((a) => s.cards[a.uid] === def);
   const ally = s.players[i].play.find((c) => c.uid === target);
   return !!ally && !(ally.attached ?? []).some((u) => s.cards[u] === def);
@@ -1102,19 +1391,25 @@ export function canPlay(s: GameState, i: number, uid: string): string | undefine
   const p = s.players[i];
   const c = pcard(s, uid);
   if (c.type === "recurso") return "Solo sirve para pagar.";
-  if (c.play && c.play.timing !== "action") return c.play.timing === "defend" ? "Se juega al defenderte." : c.play.timing === "treachery" ? "Se juega cuando se revela una traición contra ti." : "Se juega después de que te ataquen.";
+  if (c.play && c.play.timing !== "action") return ({ defend: "Se juega al defenderte.", treachery: "Se juega cuando se revela una traición contra ti.", boost: "Se juega cuando el villano voltea su refuerzo al atacarte.", afterAttack: "Se juega después de que te ataquen." } as Record<string, string>)[c.play.timing] ?? "Ahora no se puede jugar.";
   if (c.play?.heroOnly && p.form !== "heroe") return "Solo en forma de héroe.";
   const first = c.play?.effects[0];
   if (first && "target" in first && first.target === "chooseMinion" && !s.players.some((q) => q.engaged.length)) return "No hay esbirros a los que apuntar.";
-  if (c.type === "aliado" && p.play.filter((x) => pcard(s, x.uid).type === "aliado").length >= 3) return "Ya tienes 3 aliados.";
+  if (c.type === "aliado" && allyCount(s, i) >= allyLimit(s, i)) return `Ya tienes ${allyLimit(s, i)} aliados.`;
+  if (c.heroOnly && p.form !== "heroe") return "Solo en forma de héroe.";
+  if (c.identityOnly && p.form !== "identidad") return "Solo en tu identidad.";
+  if (c.maxInPlay && p.play.filter((x) => x.def === c.id).length >= c.maxInPlay) return `Solo puedes tener ${c.maxInPlay} en juego.`;
+  if (c.oncePerRound && p.roundUsed?.includes(c.id)) return "Solo una vez por ronda.";
+  if (c.heroTraitRequired && !(heroOf(p).heroTraits ?? []).includes(c.heroTraitRequired)) return "Tu héroe no pertenece a la Guardia de Aurelia.";
+  if (c.requiresCharTrait && !controlsTrait(s, i, c.requiresCharTrait)) return "Necesitas controlar un personaje Espía.";
   if (first?.do === "attachSelf") {
     const t = first.target;
     const opts = optionsFor(s, i, t).filter((o) => attachAllowed(s, i, uid, o.id));
-    if (!opts.length) return t === "chooseAlly" ? "No tienes aliados sin esta carta." : t === "chooseMinion" ? "No hay esbirros a los que vincularla." : "No hay enemigos a los que vincularla.";
+    if (!opts.length) return t === "chooseAlly" ? "No tienes aliados sin esta carta." : t === "chooseMinion" ? "No hay esbirros a los que vincularla." : t === "mainPlan" ? "El plan principal ya tiene una." : t === "chooseFriendly" ? "Todos tus personajes ya la tienen." : "No hay enemigos a los que vincularla.";
   }
   if (first?.do === "readyAlly" && !p.play.some((x) => pcard(s, x.uid).ally && x.exhausted)) return "No tienes aliados agotados.";
   const cost = costOf(s, i, uid);
-  const available = p.hand.filter((u) => u !== uid).reduce((a, u) => a + payValue(s, u, uid), 0) + resourceSources(s, i).reduce((a, x) => a + x.amount, 0);
+  const available = p.hand.filter((u) => u !== uid).reduce((a, u) => a + payValue(s, u, uid), 0) + resourceSources(s, i).filter((x) => !c.payOnly || resMatches(x.res, c.payOnly)).reduce((a, x) => a + x.amount, 0);
   if (available < cost) return `Necesitas ${cost} recursos.`;
   if (first?.do === "reviveAlly" && !reviveOptions(s, i, `event:${uid}`).length) return "No hay ningún aliado en los descartes que puedas pagar.";
   return undefined;
@@ -1128,7 +1423,11 @@ export function resourceSources(s: GameState, i: number): { id: string; label: s
   if (ir && p.form === "identidad" && !p.identityResUsed) out.push({ id: "identity", label: heroOf(p).identity.name, res: ir.res, amount: ir.amount });
   for (const c of p.play) {
     const r = pcard(s, c.uid).resourceAbility;
-    if (r && !c.exhausted && (!r.heroOnly || p.form === "heroe")) out.push({ id: c.uid, label: pcard(s, c.uid).name, res: r.res, amount: r.amount });
+    if (!r || c.exhausted || (r.heroOnly && p.form !== "heroe") || (r.identityOnly && p.form !== "identidad")) continue;
+    if (r.fromDiscardTop) {
+      const top = p.discard[p.discard.length - 1];
+      if (top && pcard(s, top).resources > 0) out.push({ id: c.uid, label: `${pcard(s, c.uid).name} (${pcard(s, top).name})`, res: pcard(s, top).resType, amount: pcard(s, top).resources });
+    } else out.push({ id: c.uid, label: pcard(s, c.uid).name, res: r.res, amount: r.amount });
   }
   return out;
 }
@@ -1166,8 +1465,12 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       const sources = resourceSources(s, i).filter((r) => x.extra?.includes(r.id));
       if ((x.extra?.length ?? 0) !== sources.length) return "Esa fuente de recursos no está disponible.";
       const cost = costOf(s, i, x.card);
+      if (c.payOnly && (x.pay.some((u) => !resMatches(pcard(s, u).resType, c.payOnly!)) || sources.some((r) => !resMatches(r.res, c.payOnly!)))) return `Solo puedes pagarla con ${RES_ICON[c.payOnly]}.`;
+      if (p.form !== "heroe" && x.pay.some((u) => pcard(s, u).heroFormOnly)) return `${pcard(s, x.pay.find((u) => pcard(s, u).heroFormOnly)!).name} solo se gasta en forma de héroe.`;
       if (resourcesOf(s, x.pay, x.card) + sources.reduce((a, r) => a + r.amount, 0) < cost) return `Faltan recursos: necesitas ${cost}.`;
       if (p.discount) { log(s, `Descuento: ${c.name} cuesta ${p.discount} menos.`); p.discount = 0; }
+      if (p.allyDiscount && c.ally && c.traits?.includes(p.allyDiscount.trait)) { log(s, `Descuento: ${c.name} cuesta ${p.allyDiscount.amount} menos.`); p.allyDiscount = undefined; }
+      if (c.oncePerRound) (p.roundUsed ??= []).push(c.id);
       const paid = paidByType(s, x.pay, x.card);
       for (const r of sources) {
         paid[r.res] = (paid[r.res] ?? 0) + r.amount;
@@ -1202,8 +1505,10 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (x.a === "attack" && p.stunned) { p.stunned = false; log(s, `${heroLabel} está Aturdido: su ataque se cancela (pierde Aturdido).`); return; }
       if (x.a === "thwart" && p.confused) { p.confused = false; log(s, `${heroLabel} está Confundido: no contiene nada (pierde Confundido).`); return; }
       if (x.a === "attack") {
-        log(s, `${heroLabel} ataca.`);
-        runEffects(s, i, [{ do: "damage", target: "chooseEnemy", amount: st.fuerza }], 0, { basic: "hero" });
+        const extra = p.nextAttack;
+        p.nextAttack = undefined;
+        log(s, `${heroLabel} ataca${extra ? ` con +${extra.bonus} de Fuerza` : ""}.`);
+        runEffects(s, i, [{ do: "damage", target: "chooseEnemy", amount: st.fuerza + (extra?.bonus ?? 0) }], 0, { basic: "hero", overkill: extra?.overkill });
       } else {
         log(s, `${heroLabel} contiene el plan.`);
         runEffects(s, i, [{ do: "thwart", target: "choosePlan", amount: st.ingenio }]);
@@ -1215,7 +1520,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (p.heroExhausted) return "Ya has actuado este turno.";
       p.heroExhausted = true;
       const before = p.damage;
-      p.damage = Math.max(0, p.damage - heroOf(p).identity.recuperacion);
+      p.damage = Math.max(0, p.damage - heroStats(s, i).recuperacion);
       log(s, `${heroName(s, i)} descansa y recupera ${before - p.damage} vida.`);
       return;
     }
@@ -1224,8 +1529,15 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       const def = c && pcard(s, c.uid);
       if (!c || !def?.ally) return "Ese aliado no está en juego.";
       if (c.exhausted) return `${def.name} está agotado.`;
-      c.exhausted = true;
       const attack = x.a === "allyAttack";
+      if (attack && def.ally.attackDiscard) {
+        const u = cheapest(s, i);
+        if (!u) return `Para que ${def.name} ataque, descarta una carta de tu mano.`;
+        p.hand = p.hand.filter((y) => y !== u);
+        p.discard.push(u);
+        log(s, `${def.name} exige un precio: descartas ${pcard(s, u).name}.`);
+      }
+      c.exhausted = true;
       if (attack && c.stunned) { c.stunned = false; log(s, `${def.name} está Aturdido: su ataque se cancela (pierde Aturdido).`); return; }
       if (!attack && c.confused) { c.confused = false; log(s, `${def.name} está Confundido: no contiene nada (pierde Confundido).`); return; }
       log(s, `${def.name} ${attack ? "ataca" : "contiene el plan"}.`);
@@ -1271,6 +1583,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       if (p.flippedThisTurn) return "Solo puedes cambiar de forma una vez por turno.";
       p.form = p.form === "heroe" ? "identidad" : "heroe";
       p.flippedThisTurn = true;
+      for (const c of [...p.play]) if (pcard(s, c.uid).discardOnFlip) { leavePlay(s, i, c.uid); log(s, `${pcard(s, c.uid).name} se apaga al cambiar de forma.`); }
       log(s, p.form === "heroe" ? `${heroOf(p).identity.name} se transforma en ${heroLabel}.` : `${heroLabel} vuelve a ser ${heroOf(p).identity.name}.`);
       const punish = currentStage(s).flipPunish ?? 0;
       if (p.form === "heroe" && punish) {
@@ -1310,7 +1623,7 @@ function doAction(s: GameState, i: number, p: PlayerState, heroLabel: string, x:
       }
       const need = handSize(s, i) - p.hand.length;
       if (need > 0) drawCards(s, i, need);
-      p.heroExhausted = false; p.flippedThisTurn = false; p.defeatedThisTurn = 0;
+      p.heroExhausted = false; p.flippedThisTurn = false; p.defeatedThisTurn = 0; p.nextAttack = undefined;
       for (const c of p.play) c.exhausted = false;
       log(s, `${heroName(s, i)} termina su turno.`);
       nextTurn(s);
@@ -1332,18 +1645,18 @@ function abilitySource(s: GameState, i: number, src: string): { ability: Ability
 function checkAbilityPay(s: GameState, i: number, ab: Ability): string | undefined {
   const want = ab.payFor;
   if (!want || !ab.payRequired) return undefined;
-  const has = s.players[i].hand.some((u) => resMatches(pcard(s, u).resType, want));
-  return has ? undefined : `Necesitas descartar una carta con ${RES_ICON[want]} ${RES_NAME[want]}.`;
+  const has = s.players[i].hand.some((u) => payMatch(pcard(s, u).resType, want));
+  return has ? undefined : want === "any" ? "Necesitas una carta en la mano que descartar." : `Necesitas descartar una carta con ${RES_ICON[want]} ${RES_NAME[want]}.`;
 }
 
 /** Runs an ability, first asking for its resource payment if it has one. */
 function useAbility(s: GameState, i: number, ab: Ability, src: string, source: string | undefined, name: string) {
   const want = ab.payFor;
-  const payWith = want ? s.players[i].hand.filter((u) => resMatches(pcard(s, u).resType, want)) : [];
+  const payWith = want ? s.players[i].hand.filter((u) => payMatch(pcard(s, u).resType, want)) : [];
   if (want && payWith.length) {
     setPrompt(s, {
       player: i, kind: "optional",
-      text: `${name}: ${ab.payRequired ? "descarta" : "¿descartas"} una carta con ${RES_ICON[want]} ${RES_NAME[want]} para pagar${ab.payRequired ? "." : "?"}`,
+      text: `${name}: ${ab.payRequired ? "descarta" : "¿descartas"} ${want === "any" ? "una carta de tu mano" : `una carta con ${RES_ICON[want]} ${RES_NAME[want]}`} para pagar${ab.payRequired ? "." : "?"}`,
       options: [
         ...payWith.map((u) => ({ id: u, label: `${pcard(s, u).name} ${RES_ICON[pcard(s, u).resType].repeat(pcard(s, u).resources)}`, detail: pcard(s, u).text })),
         ...(ab.payRequired ? [] : [{ id: "no", label: "No pagar" }]),
@@ -1364,12 +1677,26 @@ function triggerAfterUpgrade(s: GameState, i: number) {
   runEffects(s, i, ab.effects);
 }
 
+/** The start of a player's turn: cards that gain a counter (Esquife Veloz). */
+function startTurn(s: GameState, i: number) {
+  for (const c of s.players[i].play) {
+    if (!pcard(s, c.uid).turnStartCounter) continue;
+    c.counters = (c.counters ?? 0) + 1;
+    log(s, `${pcard(s, c.uid).name} gana un contador (${c.counters}).`);
+  }
+}
+
+/** The card a player loses most cheaply (resource cards first, then the lowest cost). */
+function cheapest(s: GameState, i: number): string | undefined {
+  return [...s.players[i].hand].sort((a, b) => (pcard(s, a).type === "recurso" ? -1 : 0) - (pcard(s, b).type === "recurso" ? -1 : 0) || pcard(s, a).cost - pcard(s, b).cost)[0];
+}
+
 function nextTurn(s: GameState) {
   const n = s.players.length;
   for (let k = 1; k <= n; k++) {
     const next = (s.active + k) % n;
     if (next === s.first) break;
-    if (!s.players[next].eliminated) { s.active = next; log(s, `Turno de ${heroName(s, next)}.`); return; }
+    if (!s.players[next].eliminated) { s.active = next; log(s, `Turno de ${heroName(s, next)}.`); startTurn(s, next); return; }
   }
   startVillainPhase(s);
 }
@@ -1384,7 +1711,7 @@ function order(s: GameState): number[] {
 function startVillainPhase(s: GameState) {
   s.phase = "villano";
   // "Until the end of the phase" bonuses and discounts end with the players' phase.
-  for (const p of s.players) { p.temp = undefined; p.discount = undefined; for (const c of p.play) c.temp = undefined; }
+  for (const p of s.players) { p.temp = undefined; p.discount = undefined; p.allyDiscount = undefined; p.tempTraits = undefined; for (const c of p.play) c.temp = undefined; }
   s.phaseReport = [];
   s.reportRound = s.round;
   log(s, `Fase del villano (ronda ${s.round}).`);
@@ -1475,8 +1802,18 @@ function villainStep(s: GameState, st: VillainStep) {
       const v = villainStats(s);
       if (attacking) {
         const drones = p.engaged.filter((m) => m.drone).length * (stage.fuerzaPorDron ?? 0);
-        log(s, `Fuerza ${v.fuerza}${drones ? ` + ${drones} por drones` : ""} + ${boost} ⭐ = ${v.fuerza + drones + boost} de daño.`);
-        attack(s, st.player, "villain", v.fuerza + drones, boost);
+        const base = v.fuerza + drones;
+        log(s, `Fuerza ${v.fuerza}${drones ? ` + ${drones} por drones` : ""} + ${boost} ⭐ = ${base + boost} de daño.`);
+        const cancels = boost > 0 ? p.hand.filter((u) => pcard(s, u).play?.timing === "boost" && autoPay(s, st.player, costOf(s, st.player, u), u)) : [];
+        if (cancels.length) {
+          setPrompt(s, {
+            player: st.player, kind: "optional", text: `El refuerzo suma ${boost} ⭐ al ataque. ¿Lo anulas? (se paga solo con tus cartas menos valiosas)`,
+            options: [...cancels.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text })), { id: "no", label: "No" }],
+            resume: { r: "boost", player: st.player, base, boost },
+          });
+          return;
+        }
+        villainStrike(s, st.player, base, boost);
       } else {
         log(s, `Plan ${v.plan} + ${boost} ⭐ = +${v.plan + boost} amenaza al plan principal.`);
         addThreat(s, "main", v.plan + boost);
@@ -1523,10 +1860,29 @@ function villainStep(s: GameState, st: VillainStep) {
       });
       for (const p of s.players) { p.heroAbilityUsed = false; p.identityAbilityUsed = false; p.identityResUsed = false; for (const c of p.play) c.usedThisRound = false; }
       log(s, `Ronda ${s.round}. Empieza ${heroName(s, s.active)}.`);
+      for (const p of s.players) p.roundUsed = undefined;
+      startTurn(s, s.active);
       return;
     }
   }
 }
+
+/** The villain's attack goes ahead with this boost. */
+function villainStrike(s: GameState, i: number, base: number, boost: number) {
+  attack(s, i, "villain", base, boost);
+}
+
+/** Pays one resource of this type from hand (resource cards first). Returns the card used. */
+function payOne(s: GameState, i: number, res: ResType | "any"): string | undefined {
+  const p = s.players[i];
+  const pool = p.hand.filter((u) => payMatch(pcard(s, u).resType, res)).sort((a, b) => (pcard(s, a).type === "recurso" ? -1 : 0) - (pcard(s, b).type === "recurso" ? -1 : 0) || pcard(s, a).cost - pcard(s, b).cost);
+  const u = pool[0];
+  if (!u) return undefined;
+  p.hand = p.hand.filter((x) => x !== u);
+  p.discard.push(u);
+  return u;
+}
+const canPayOne = (s: GameState, i: number, res: ResType | "any") => s.players[i].hand.some((u) => payMatch(pcard(s, u).resType, res));
 
 function activateMinion(s: GameState, i: number, uid: string) {
   const p = s.players[i];
@@ -1585,6 +1941,27 @@ function reveal(s: GameState, i: number, uid: string) {
   const def = ecard(s, uid);
   report(s, 3, `Paso 3 · Encuentro para ${heroName(s, i)}: ${def.name}`, [def.id]);
   log(s, `Encuentro para ${heroName(s, i)}: ${def.name}.`);
+  // Cancel it: allies in play (any card) or events from hand (treacheries, in hero form).
+  const p = s.players[i];
+  const allies = p.play.filter((c) => abilitiesOf(pcard(s, c.uid)).some((a) => a.timing === "encounter" && !(a.cost === "exhaust" && c.exhausted) && (!a.payFor || canPayOne(s, i, a.payFor))));
+  const events = def.type === "traicion" && def.reveal?.length && p.form === "heroe" ? p.hand.filter((u) => pcard(s, u).play?.timing === "treachery" && autoPay(s, i, costOf(s, i, u), u)) : [];
+  if (allies.length || events.length) {
+    setPrompt(s, {
+      player: i, kind: "optional", text: `${def.name}: ${def.text} ¿La anulas?`,
+      options: [
+        ...allies.map((c) => ({ id: `ally:${c.uid}`, label: `${pcard(s, c.uid).name} (en juego)`, detail: abilitiesOf(pcard(s, c.uid)).find((a) => a.timing === "encounter")!.text })),
+        ...events.map((u) => ({ id: u, label: pcard(s, u).name, detail: `${pcard(s, u).text} (se paga solo con tus cartas menos valiosas)` })),
+        { id: "no", label: "No" },
+      ],
+      resume: { r: "encounter", player: i, card: uid },
+    });
+    return;
+  }
+  resolveReveal(s, i, uid);
+}
+
+function resolveReveal(s: GameState, i: number, uid: string) {
+  const def = ecard(s, uid);
   switch (def.type) {
     case "esbirro": engageMinion(s, i, uid); return;
     case "plan": enterSidePlan(s, i, uid); return;
@@ -1598,18 +1975,6 @@ function reveal(s: GameState, i: number, uid: string) {
       const owner = def.type === "obligacion" ? s.players.findIndex((q) => !q.eliminated && heroOf(q).obligation === def.id) : -1;
       const who = owner >= 0 ? owner : i;
       if (who !== i) log(s, `${def.name} es una obligación de ${heroName(s, who)}.`);
-      if (def.type === "traicion") {
-        const p = s.players[who];
-        const cancels = p.form === "heroe" ? p.hand.filter((u) => pcard(s, u).play?.timing === "treachery" && autoPay(s, who, costOf(s, who, u), u)) : [];
-        if (cancels.length && def.reveal?.length) {
-          setPrompt(s, {
-            player: who, kind: "optional", text: `${def.name}: ${def.text} ¿Anulas su efecto? (se paga solo con tus cartas menos valiosas)`,
-            options: [...cancels.map((u) => ({ id: u, label: pcard(s, u).name, detail: pcard(s, u).text })), { id: "no", label: "No" }],
-            resume: { r: "treachery", player: who, card: uid },
-          });
-          return;
-        }
-      }
       resolveTreachery(s, who, uid);
       return;
     }
@@ -1686,7 +2051,8 @@ function askInterrupts(s: GameState, r: Extract<Resume, { r: "interrupts" }>) {
   const opts = responsesFor(s, r.player, "defend");
   const ab = heroOf(p).ability;
   const canAbility = !!ab && ab.timing === "defend" && !p.heroAbilityUsed && p.form === "heroe";
-  const cardsInPlay = p.play.filter((c) => !c.exhausted && abilitiesOf(pcard(s, c.uid)).some((a) => a.timing === "defend" && (!a.heroOnly || p.form === "heroe")));
+  const used = r.used ?? [];
+  const cardsInPlay = p.play.filter((c) => !used.includes(`play:${c.uid}`) && abilitiesOf(pcard(s, c.uid)).some((a) => a.timing === "defend" && (!a.heroOnly || p.form === "heroe") && !(a.cost === "exhaust" && c.exhausted) && !(c.exhausted && !a.cost && !a.payFor && c.counters === undefined) && (c.counters === undefined || c.counters > 0) && (!a.payFor || canPayOne(s, r.player, a.payFor))));
   if (!opts.length && !canAbility && !cardsInPlay.length) return applyAttackDamage(s, r);
   setPrompt(s, {
     player: r.player, kind: "optional", text: "¿Juegas algo antes de recibir el golpe? (las cartas se pagan solas con tus cartas menos valiosas)",
@@ -1713,11 +2079,12 @@ function resolveInterrupt(s: GameState, r: Extract<Resume, { r: "interrupts" }>,
     const p = s.players[r.player];
     const c = p.play.find((x) => x.uid === option.slice(5));
     if (c) {
-      c.exhausted = true;
       const a = abilitiesOf(pcard(s, c.uid)).find((x) => x.timing === "defend")!;
-      log(s, `${heroName(s, r.player)} usa ${pcard(s, c.uid).name}.`);
+      if (a.cost === "exhaust" || (!a.cost && !a.payFor && c.counters === undefined)) c.exhausted = true;
+      const pay = a.payFor ? payOne(s, r.player, a.payFor) : undefined;
+      log(s, `${heroName(s, r.player)} usa ${pcard(s, c.uid).name}${pay ? ` (paga con ${pcard(s, pay).name})` : ""}.`);
       const pool = { amount: 0 };
-      runEffects(s, r.player, a.effects, 0, { attacker: r.attacker, preventPool: pool, source: c.uid });
+      runEffects(s, r.player, a.effects, 0, { attacker: r.attacker, preventPool: pool, source: c.uid, sourceName: pcard(s, c.uid).name });
       r = { ...r, prevented: r.prevented + pool.amount };
     }
   } else if (option !== "no") {
@@ -1731,7 +2098,9 @@ function resolveInterrupt(s: GameState, r: Extract<Resume, { r: "interrupts" }>,
     runEffects(s, r.player, c.play!.effects, 0, { attacker: r.attacker, preventPool: pool });
     r = { ...r, prevented: r.prevented + pool.amount };
   }
-  applyAttackDamage(s, r);
+  if (option === "no" || s.result) return applyAttackDamage(s, r);
+  // Something was played: offer the rest (each card in play once per attack).
+  askInterrupts(s, { ...r, used: [...(r.used ?? []), option] });
 }
 
 function applyAttackDamage(s: GameState, r: Extract<Resume, { r: "interrupts" }>) {
@@ -1767,7 +2136,9 @@ function applyAttackDamage(s: GameState, r: Extract<Resume, { r: "interrupts" }>
   const env = environmentDef(s)?.environment;
   if (r.attacker === "villain" && env?.afterAttack && p.damage > heroBefore) { runEffects(s, r.player, env.afterAttack); if (checkEnd(s)) return; }
   // Represalia: the hero hits back (not against ranged attackers).
-  const ret = p.form === "heroe" ? (heroOf(p).hero.retaliate ?? 0) + p.play.reduce((a, c) => a + (pcard(s, c.uid).retaliate ?? 0), 0) : 0;
+  // Only when the hero was the one attacked (not when an ally blocked).
+  const heroHit = !r.defender || r.defender === "hero";
+  const ret = p.form === "heroe" && heroHit ? (heroOf(p).hero.retaliate ?? 0) + p.play.reduce((a, c) => a + (pcard(s, c.uid).retaliate ?? 0), 0) : 0;
   if (ret && kw.includes("distancia")) log(s, `${enemyName(s, r.attacker)} ataca a distancia: la Represalia no le alcanza.`);
   else if (ret && (r.attacker === "villain" || refFromID(s, r.attacker))) { log(s, `Represalia: ${ret} daño a ${enemyName(s, r.attacker)}.`); damageEnemy(s, r.attacker, ret); if (checkEnd(s)) return; }
   const opts = responsesFor(s, r.player, "afterAttack");

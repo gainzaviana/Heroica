@@ -278,3 +278,24 @@ button:disabled { opacity: 0.45; cursor: default; }
 .hc-camp { margin: 4px 0; }
 .hc-list { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
 .hc-list li { display: flex; gap: 8px; align-items: flex-start; }
+.album-note { margin-top: 4px; }
+
+/* Aspect colour-coding: the frame shows where a card belongs; the badges say its type and aspect. */
+.card.asp-agresion { --tcol: #dc2626; } .card.asp-justicia { --tcol: #eab308; } .card.asp-proteccion { --tcol: #16a34a; }
+.card.asp-liderazgo { --tcol: #2563eb; } .card.asp-basica { --tcol: #64748b; } .card.asp-campana { --tcol: #9a6b3a; }
+.card.asp-heroe { --tcol: #8a6d3b; }
+.card.enc.enc-purple { --tcol: #7c3aed; } .card.enc.enc-orange { --tcol: #ea580c; }
+.card { border: 2px solid color-mix(in srgb, var(--tcol) 70%, #1b1622); }
+.card-tags { display: flex; align-items: center; justify-content: space-between; gap: 3px; margin: -1px 0 3px; min-height: 13px; }
+.type-badge { font-family: var(--sans, inherit); font-size: 7.5px; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: #fff; background: #1b1622; border-radius: 4px; padding: 1px 5px; line-height: 1.3; }
+.asp-tag { font-size: 7.5px; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; color: #fff; background: color-mix(in srgb, var(--tcol) 82%, #000); border: 1px solid rgba(255, 255, 255, 0.55); border-radius: 4px; padding: 0 5px; line-height: 1.3; max-width: 62%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card.asp-justicia .asp-tag { color: #2c2433; background: #fde047; }
+.card-sm .card-tags { min-height: 11px; } .card-sm .type-badge, .card-sm .asp-tag { font-size: 6.5px; padding: 0 3px; }
+.card-lg .card-tags { min-height: 20px; margin-bottom: 5px; } .card-lg .type-badge, .card-lg .asp-tag { font-size: 11px; padding: 2px 8px; }
+.stat i.cons { font-style: normal; font-size: 7px; margin-left: 1px; color: #ffe08a; vertical-align: super; line-height: 0; }
+.card-lg .stat i.cons { font-size: 10px; }
+.form-tag { display: inline-block; font-size: 10px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase; color: #fff; background: var(--hero); border-radius: 5px; padding: 1px 7px; margin-right: 6px; }
+.aspect-chip { color: #fff; background: var(--tcol); }
+.aspect-chip.asp-justicia { color: #2c2433; }
+.deck-summary .chip.aspect-chip, .deck-info .chip.aspect-chip { background: var(--tcol); color: #fff; }
+.deck-summary .chip.aspect-chip.asp-justicia { color: #2c2433; }

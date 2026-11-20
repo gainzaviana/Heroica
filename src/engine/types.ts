@@ -23,6 +23,8 @@ export type Target =
   | "allAllies" // every ally of this player
   | "chooseAlly" // one of your allies
   | "choosePlayer" // a player (their hero and allies); automatic when playing solo
+  | "chooseOtherPlan" // a plan other than the one the previous thwart hit
+  | "chooseHandCard" // a card in your hand
   | "bestPlan"; // picked for you: a side plan this clears, else the main plan, else the fullest side plan
 
 /** Printed resource types. Comodín counts as any type. */
@@ -46,6 +48,12 @@ export type Effect =
       perHeld?: { res: ResType; amount: number };
       /** +amount per counter on the acting card. */
       perCounter?: number;
+      /** The damage equals this stat of your hero (plus amount). */
+      fromStat?: "fuerza";
+      /** Never more than this. */
+      max?: number;
+      /** +amount if every resource paid was of this type (Comodín counts). */
+      onlyPaidBonus?: { res: ResType; amount: number };
     }
   | {
       do: "thwart"; target: Target; amount: number;
@@ -54,10 +62,13 @@ export type Effect =
       allIfTrait?: string;
       /** +amount if you defeated an enemy this turn. */
       bonusIfDefeated?: number;
+      onlyPaidBonus?: { res: ResType; amount: number };
+      /** The threat removed goes onto the acting card as counters. */
+      toSource?: boolean;
     }
   | { do: "addThreat"; target: Target; amount: number }
   | { do: "heal"; target: Target; amount: number }
-  | { do: "draw"; amount: number; ifPaid?: ResType; each?: boolean } // ifPaid: only if paid with that type; each: every player draws
+  | { do: "draw"; amount: number; ifPaid?: ResType; each?: boolean; target?: Target; ifOnlyPaid?: ResType } // ifPaid: only if paid with that type; each: every player draws
   | { do: "prevent"; amount: number } // during a defence: less damage
   | { do: "stun"; target: Target } // the enemy skips its next activation
   | { do: "readyHero" }
@@ -74,7 +85,7 @@ export type Effect =
   | { do: "status"; status: StatusKind; target: Target } // give a status card (never two of the same)
   /** Discard the top cards of your deck and read their printed resources: damage per icon of a type
    *  (to lastTarget), and/or (one card) the branch for its type — a Comodín runs every branch. */
-  | { do: "mill"; amount: number; damagePer?: { res: ResType; amount: number }; branches?: Partial<Record<Exclude<ResType, "comodin">, Effect[]>> }
+  | { do: "mill"; amount: number; damagePer?: { res: ResType; amount: number; exact?: boolean }; branches?: Partial<Record<Exclude<ResType, "comodin">, Effect[]>> }
   | { do: "ifKilled"; effects: Effect[] } // only if the previous damage defeated an enemy
   | { do: "selfDamage"; amount: number } // the acting ally takes damage (consequential damage)
   | { do: "discardSelf" } // the acting card is discarded
@@ -95,9 +106,39 @@ export type Effect =
   /** Pay the printed cost of an ally in any player's discard (paid for you) to put it into play under your control. */
   | { do: "reviveAlly" }
   /** The next card that player plays this phase costs this much less. */
-  | { do: "discount"; target: Target; amount: number }
+  | { do: "discount"; target: Target; amount: number; allyTrait?: string }
   /** This upgrade attaches to the chosen ally, minion or enemy (max one copy per card). */
   | { do: "attachSelf"; target: Target }
+  /** Remove a counter from the acting card; with none left it is discarded. */
+  | { do: "spendCounter" }
+  /** The hero has this trait until the end of the phase. */
+  | { do: "gainTrait"; trait: string }
+  /** The chosen player takes the topmost upgrade with this trait from their discard back to their hand. */
+  | { do: "recoverTrait"; trait: string; target: Target }
+  /** Only if your hero has this trait (Aéreo from cards in play, or printed). */
+  | { do: "ifHeroTrait"; trait: string; effects: Effect[] }
+  /** Only in this form. */
+  | { do: "ifForm"; form: "heroe" | "identidad"; effects: Effect[] }
+  /** Only if the previous thwart removed the last threat from its plan. */
+  | { do: "ifCleared"; effects: Effect[] }
+  /** Look at the top cards of the encounter deck: remove 1 threat from a plan per treachery among them. */
+  | { do: "scoutEncounter"; amount: number }
+  /** Ready every character with this trait you control; every one in play gets +1 Fuerza and +1 Ingenio this phase. */
+  | { do: "rally"; trait: string }
+  /** Exhaust any of your ready allies: draw 1 card per ally exhausted. */
+  | { do: "exhaustAlliesDraw" }
+  /** Your next basic attack this turn gets +amount (and overkill if paid only with that type). */
+  | { do: "nextAttackBonus"; amount: number; overkillIfOnly?: ResType }
+  /** Move damage from your hero to an enemy. */
+  | { do: "moveDamage"; target: Target; amount: number }
+  /** Search your deck (and discard) for a card of this type/trait and add it to your hand; shuffle. */
+  | { do: "tutor"; trait?: string; type?: PlayerCardType; discard?: boolean }
+  /** Put a card of your choice from your discard back into your deck (or stop); shuffle. */
+  | { do: "recycle" }
+  /** Discard a card of your choice from your hand. */
+  | { do: "discardFromHand"; target: Target }
+  /** Put into play from your hand an ally with this trait whose cost is at most this card's counters; then discard this card. */
+  | { do: "quinjet"; trait: string }
   // Campaign villains
   | { do: "ifTrait"; trait: string; effects: Effect[]; else?: Effect[] } // only if the villain has this trait (from the environment)
   | { do: "armWeapon" } // the top card of the weapons deck attaches to the villain; if it is empty, surge
@@ -120,12 +161,18 @@ export type Timing =
   | "afterAttack" // response: after an enemy attacked you
   | "afterUpgrade" // response: after you play an upgrade
   | "villainAttack" // response: after the villain starts an attack against you
-  | "treachery"; // interrupt: when a treachery is revealed against you, cancel its effects
+  | "treachery" // interrupt: when a treachery is revealed against you, cancel its effects
+  | "encounter" // interrupt (cards in play): when an encounter card is revealed against you, cancel it and reveal another
+  | "special" // only through an event that fires every such card ("¡Por Oricalcia!")
+  | "boost"; // interrupt: when the villain's boost cards are flipped for an attack against you, cancel their icons
 
 export interface Ability {
   timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string; heroOnly?: boolean;
-  /** Using it asks you to discard a card with this resource (Comodín counts) to pay. */
-  payFor?: ResType;
+  /** Using it asks you to discard a card with this resource (Comodín counts; "any": any card) to pay. */
+  payFor?: ResType | "any";
+  /** "special" abilities: the bonus when resolved as the last step (added to the first amount, or to every amount). */
+  lastBonus?: number;
+  lastBonusAll?: boolean;
   /** Without such a card you can't use it. */
   payRequired?: boolean;
   /** Only in identity form. */
@@ -139,9 +186,50 @@ export type EncounterCardType = "esbirro" | "traicion" | "plan" | "vinculo" | "o
 
 export interface Stats { fuerza?: number; ingenio?: number; aguante?: number }
 
+/** Where a card belongs: a hero's signature cards, an aspect, the basic pool or the campaign. */
+export type Aspect = "heroe" | "agresion" | "justicia" | "proteccion" | "liderazgo" | "basica" | "campana";
+
 export interface PlayerCardDef {
   id: string;
   name: string;
+  aspect?: Aspect;
+  /** Signature cards: the hero they belong to (set by content.ts). */
+  owner?: string;
+  /** Can only be played in hero form. */
+  heroOnly?: boolean;
+  /** Can only be played in identity form. */
+  identityOnly?: boolean;
+  /** At most this many copies in play per player. */
+  maxInPlay?: number;
+  /** Once per round (per player). */
+  oncePerRound?: boolean;
+  /** Can only be played if your hero has this trait. */
+  heroTraitRequired?: string;
+  /** Can only be played if you control a character (hero or ally) with this trait. */
+  requiresCharTrait?: string;
+  /** Only resources of this type (Comodín counts) can pay for it. */
+  payOnly?: ResType;
+  /** Resource cards: can only be spent in hero form. */
+  heroFormOnly?: boolean;
+  /** Upgrades: discarded when you change form. */
+  discardOnFlip?: boolean;
+  /** Extra bonus while your hero has this trait (Aéreo). */
+  bonusIfTrait?: { trait: string; bonus: Stats };
+  /** Supports: you can control this many more allies (allyLimitIfAll: only if all your allies have that trait). */
+  allyLimit?: number;
+  allyLimitIfAll?: string;
+  /** Attached to an ally: traits it gains. */
+  attachGrants?: string[];
+  /** In play: after a side plan is cleared, exhaust this card for these effects (hero form). */
+  onSidePlanCleared?: Effect[];
+  /** In play: when threat would be placed on the main plan, discard this card to prevent this much of it. */
+  guardMainPlan?: number;
+  /** In play: when a surge would resolve, discard this card for these effects. */
+  onSurge?: Effect[];
+  /** Attached to the main plan: its threat limit grows by this much. */
+  planLimitBonus?: number;
+  /** Gains a counter at the start of each of your turns. */
+  turnStartCounter?: boolean;
   type: PlayerCardType;
   cost: number;
   /** Resources it gives when discarded to pay (most 1, resource cards 2), all of type `resType`. */
@@ -164,9 +252,11 @@ export interface PlayerCardDef {
     onBlock?: Effect[];
     /** After a minion enters play: spend one of its counters to run these (lastTarget is the minion). */
     onMinionEnters?: Effect[];
+    /** To attack, you must also discard a card from your hand. */
+    attackDiscard?: boolean;
   };
   /** Upgrades attached to an ally: bonus to that ally. */
-  attachBonus?: { fuerza?: number; ingenio?: number };
+  attachBonus?: { fuerza?: number; ingenio?: number; vida?: number };
   /** Attached to an enemy: when it would attack, discard this instead and stun the enemy. */
   snare?: boolean;
   /** Attached to a minion: when it is defeated (the card goes back to your discard). */
@@ -176,7 +266,7 @@ export interface PlayerCardDef {
   /** Resource cards: worth double when paying for a card with this trait. */
   doubleFor?: string;
   /** Upgrades: stat bonus to the hero. */
-  bonus?: Stats & { vidaMax?: number; mano?: number };
+  bonus?: Stats & { vidaMax?: number; mano?: number; recuperacion?: number };
   /** Traits other cards can count (e.g. "pieza" for armour pieces). */
   traits?: string[];
   /** Events: what they do when played, and when they can be played. */
@@ -185,7 +275,8 @@ export interface PlayerCardDef {
   ability?: Ability;
   abilities?: Ability[];
   /** Exhaust it while paying for a card: it gives this resource. */
-  resourceAbility?: { res: ResType; amount: number; heroOnly?: boolean };
+  /** fromDiscardTop: it gives the printed resources of the top card of your discard instead. */
+  resourceAbility?: { res: ResType; amount: number; heroOnly?: boolean; identityOnly?: boolean; fromDiscardTop?: boolean };
   /** Counters it enters play with; a resource card with counters is discarded when they run out. */
   uses?: number;
   /** Upgrades: after an enemy attacks your hero, deal this much damage to it. */
@@ -255,6 +346,10 @@ export interface HeroDef {
   setupToHand?: string;
   identity: { name: string; recuperacion: number; mano: number; text: string };
   vida: number;
+  /** The hero's traits ("guardia": Guardia de Aurelia, "espia"…). */
+  heroTraits?: string[];
+  /** Setup: choose a card of this type/trait from your deck for your starting hand. */
+  setupTutor?: { trait?: string; type?: PlayerCardType };
   /** The hero's own once-per-round ability (hero form). */
   ability?: Ability;
   /** An action usable once per round in identity form. */
@@ -388,6 +483,14 @@ export interface PlayerState {
   temp?: { fuerza?: number; ingenio?: number };
   /** The next card played this phase costs this much less. */
   discount?: number;
+  /** Traits the hero has until the end of the phase (Aéreo from the boots…). */
+  tempTraits?: string[];
+  /** The next ally with this trait played this phase costs this much less. */
+  allyDiscount?: { trait: string; amount: number };
+  /** The next basic attack this turn: extra Fuerza, and overkill. */
+  nextAttack?: { bonus: number; overkill: boolean };
+  /** Once-per-round cards already played this round (definition ids). */
+  roundUsed?: string[];
 }
 
 export type Phase = "jugadores" | "villano" | "fin";
@@ -407,12 +510,14 @@ export type Resume =
   | { r: "effects"; player: number; effects: Effect[]; index: number; source?: string; ctx?: EffectCtx }
   /** oneShots: one-use attachments that were on the villain when this attack started (they go after it). */
   | { r: "defense"; player: number; attacker: string; amount: number; boost: number; oneShots?: string[] }
-  | { r: "interrupts"; player: number; attacker: string; amount: number; defender: string | null; prevented: number; oneShots?: string[] }
+  | { r: "interrupts"; player: number; attacker: string; amount: number; defender: string | null; prevented: number; oneShots?: string[]; used?: string[] }
   | { r: "afterAttack"; player: number; attacker: string }
   /** src: "hero", "identity" or "<card uid>#<ability index>". */
   | { r: "abilityPay"; player: number; src: string }
-  /** A treachery was revealed against this player: cancel it with a card from hand, or let it resolve. */
-  | { r: "treachery"; player: number; card: string }
+  /** An encounter card was revealed against this player: cancel it (a card in hand or in play), or let it resolve. */
+  | { r: "encounter"; player: number; card: string }
+  /** Boost cards were flipped for the villain's attack: cancel their icons, or let the attack go on. */
+  | { r: "boost"; player: number; base: number; boost: number }
   | { r: "villainStep" };
 
 export interface EffectCtx {
@@ -428,6 +533,13 @@ export interface EffectCtx {
   sourceName?: string;
   /** A basic attack: "hero" or the attacking ally's uid (minions with Represalia hit back). */
   basic?: string;
+  /** Enemies already hit by this card, the plan the last thwart hit and whether it was cleared. */
+  hit?: string[];
+  lastPlan?: string;
+  cleared?: boolean;
+  stopRecycle?: boolean;
+  /** Overkill for this damage (a basic attack with "¡Mole aplasta!"). */
+  overkill?: boolean;
 }
 
 export interface GameState {
@@ -461,6 +573,8 @@ export interface GameState {
   reportRound?: number;
   /** Set when hidden cards were seen (draws, shuffles, deck reveals): the interface drops its undo. */
   revealed?: boolean;
+  /** Player upgrades attached to the main plan. */
+  planAttached?: PlayerAttachment[];
   /** The last card-combo that read discarded cards (for the on-screen summary). */
   combo?: { n: number; title: string; cards: string[]; text: string };
   result?: "victoria" | "derrota";
