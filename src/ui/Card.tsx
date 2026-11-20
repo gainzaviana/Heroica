@@ -7,7 +7,7 @@ const TYPE_NAME: Record<string, string> = {
   aliado: "Aliado", mejora: "Mejora", apoyo: "Apoyo", evento: "Evento", recurso: "Recurso",
   esbirro: "Esbirro", traicion: "Traición", plan: "Plan secundario", vinculo: "Vínculo", obligacion: "Obligación", entorno: "Entorno",
 };
-const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo", legion: "Legión", mutante: "Mutante", arma: "Arma experimental", campana: "Campaña", oricalco: "Oricalco" };
+const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo", legion: "Legión", mutante: "Mutante", arma: "Arma experimental", campana: "Campaña", oricalco: "Oricalco", liderazgo: "Liderazgo" };
 const KW: Record<string, string> = { perforante: "Perforante", arrollador: "Arrollador", distancia: "A distancia" };
 const STATUS_ICON: Record<StatusKind, string> = { stunned: "💫", confused: "🌀", tough: "🛡️" };
 

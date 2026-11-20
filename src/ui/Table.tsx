@@ -1,6 +1,6 @@
 import { useEffect, useState } from "preact/hooks";
 import {
-  abilitiesOf, allyCards, allyStats, attackerKeywords, canPlay, crisisActive, currentStage, ecard, enemiesFor, environmentDef, KEYWORD_NAME, resMatches, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
+  abilitiesOf, allyCards, allyStats, attackerKeywords, canPlay, costOf, enemyAttachments, crisisActive, currentStage, ecard, enemiesFor, environmentDef, KEYWORD_NAME, resMatches, handSize, heroName, heroOf, heroStats, mainPlan, mainPlanDef, mainPlanStages, minionStats, otherCards, paidByType, pcard,
   planLimit, planName, RES_ICON, resourcesOf, resourceSources, scenarioOf, stageList, villainStats,
 } from "../engine/game";
 import type { ResType } from "../engine/types";
@@ -125,6 +125,12 @@ function VillainPanel({ s, viewing, canAct, onEncounter, onRemove }: { s: GameSt
           <div class="muted small">{env.text}</div>
         </button>
       )}
+      {enemyAttachments(s, "villain").length > 0 && (
+        <div class="panel">
+          <div class="kicker">Tus cartas en el villano</div>
+          {enemyAttachments(s, "villain").map((a) => <div key={a.uid} class="small">🕸 {pcard(s, a.uid).name} <span class="muted">({heroName(s, a.owner)})</span></div>)}
+        </div>
+      )}
       {s.villain.attachments.length > 0 && (
         <div class="panel">
           <div class="kicker">Vínculos del villano</div>
@@ -239,13 +245,18 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           {p.engaged.length === 0 && <div class="empty">Nadie te acecha.</div>}
           {p.engaged.map((m) => <EncounterCard key={m.uid} def={ENCOUNTER_CARDS.get(m.def)!} size="sm" damage={m.damage} status={m} stats={minionStats(s, m)} onClick={() => onEncounter(m.def, m.damage)} />)}
         </div>
+        {p.engaged.filter((m) => m.attached?.length).map((m) => <div key={m.uid} class="muted small">🕸 En {ENCOUNTER_CARDS.get(m.def)!.name}: {m.attached!.map((a) => pcard(s, a.uid).name).join(", ")}</div>)}
       </div>
       <div class="zone">
         <div class="zone-title">Aliados ({allyCards(s, i).length}/3)</div>
         <div class="cards">
           {allyCards(s, i).length === 0 && <div class="empty">Sin aliados.</div>}
-          {allyCards(s, i).map((c) => <PlayerCard key={c.uid} def={pcard(s, c.uid)} size="sm" exhausted={c.exhausted} damage={c.damage} status={c} allyStats={allyStats(s, c)} onClick={() => onAlly(c.uid)} />)}
+          {allyCards(s, i).map((c) => <PlayerCard key={c.uid} def={pcard(s, c.uid)} size="sm" exhausted={c.exhausted} damage={c.damage} status={c} allyStats={allyStats(s, c)} onClick={() => onAlly(c.uid)} badge={c.counters !== undefined ? <span class="chip counters" title="Contadores">×{c.counters}</span> : undefined} />)}
         </div>
+        {allyCards(s, i).filter((c) => c.attached?.length || c.temp).map((c) => (
+          <div key={c.uid} class="muted small">{pcard(s, c.uid).name}: {[...(c.attached ?? []).map((u) => pcard(s, u).name), c.temp && `${c.temp.fuerza ? `+${c.temp.fuerza} Fuerza ` : ""}${c.temp.ingenio ? `+${c.temp.ingenio} Ingenio ` : ""}esta fase`].filter(Boolean).join(" · ")}</div>
+        ))}
+        {(p.temp || p.discount) && <div class="muted small">{p.temp ? `${heroName(s, i)}: ${p.temp.fuerza ? `+${p.temp.fuerza} Fuerza ` : ""}${p.temp.ingenio ? `+${p.temp.ingenio} Ingenio ` : ""}esta fase. ` : ""}{p.discount ? `Tu próxima carta cuesta ${p.discount} menos.` : ""}</div>}
       </div>
       <div class="zone">
         <div class="zone-title">Mejoras y apoyos</div>
@@ -295,7 +306,7 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
         <Modal onClose={close}>
           <div class="center"><PlayerCard def={d} size="lg" /></div>
           {d.flavor && <p class="muted small center">{d.flavor}</p>}
-          {canAct && !why && <button class="act gold wide" onClick={() => d.cost === 0 ? (store.act({ a: "play", player: viewing, card: sheet.uid, pay: [] }), close()) : set({ k: "pay", uid: sheet.uid, pay: [], extra: [] })}>Jugar{d.cost ? ` (coste ${d.cost})` : ""}</button>}
+          {canAct && !why && <button class="act gold wide" onClick={() => costOf(s, viewing, sheet.uid) === 0 ? (store.act({ a: "play", player: viewing, card: sheet.uid, pay: [] }), close()) : set({ k: "pay", uid: sheet.uid, pay: [], extra: [] })}>Jugar{costOf(s, viewing, sheet.uid) ? ` (coste ${costOf(s, viewing, sheet.uid)}${costOf(s, viewing, sheet.uid) < d.cost ? `, rebajado de ${d.cost}` : ""})` : d.cost ? " (gratis por el descuento)" : ""}</button>}
           {canAct && why && <div class="hint center">{why}</div>}
           <button class="act ghost wide" onClick={close}>Cerrar</button>
         </Modal>
@@ -306,15 +317,16 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
       const d = pcard(s, sheet.uid);
       const sources = resourceSources(s, viewing);
       const chosen = sources.filter((r) => sheet.extra.includes(r.id));
-      const total = resourcesOf(s, sheet.pay) + chosen.reduce((a, r) => a + r.amount, 0);
-      const paid = paidByType(s, sheet.pay);
+      const cost = costOf(s, viewing, sheet.uid);
+      const total = resourcesOf(s, sheet.pay, sheet.uid) + chosen.reduce((a, r) => a + r.amount, 0);
+      const paid = paidByType(s, sheet.pay, sheet.uid);
       for (const r of chosen) paid[r.res] = (paid[r.res] ?? 0) + r.amount;
       const toggle = (u: string) => set({ ...sheet, pay: sheet.pay.includes(u) ? sheet.pay.filter((x) => x !== u) : [...sheet.pay, u] });
       const toggleExtra = (id: string) => set({ ...sheet, extra: sheet.extra.includes(id) ? sheet.extra.filter((x) => x !== id) : [...sheet.extra, id] });
       return (
         <Modal onClose={close}>
           <div class="kicker">Pagar {d.name}</div>
-          <div class="title">Descarta cartas por {d.cost} recursos · llevas {total}</div>
+          <div class="title">Descarta cartas por {cost} recursos · llevas {total}</div>
           <div class="muted small">Pagas: <PaidLine paid={paid} />{payHint(d.text)}</div>
           {sources.length > 0 && (
             <div class="sources">
@@ -328,7 +340,7 @@ function SheetView({ s, sheet, viewing, canAct, set }: { s: GameState; sheet: Sh
           <div class="cards wrap">
             {p.hand.filter((u) => u !== sheet.uid).map((u) => <PlayerCard key={u} def={pcard(s, u)} size="sm" selected={sheet.pay.includes(u)} onClick={() => toggle(u)} />)}
           </div>
-          <button class="act gold wide" disabled={total < d.cost} onClick={() => { if (!store.act({ a: "play", player: viewing, card: sheet.uid, pay: sheet.pay, extra: sheet.extra })) close(); }}>Pagar y jugar</button>
+          <button class="act gold wide" disabled={total < cost} onClick={() => { if (!store.act({ a: "play", player: viewing, card: sheet.uid, pay: sheet.pay, extra: sheet.extra })) close(); }}>Pagar y jugar</button>
           <button class="act ghost wide" onClick={close}>Cancelar</button>
         </Modal>
       );

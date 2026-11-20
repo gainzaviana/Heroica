@@ -21,7 +21,9 @@ export type Target =
   | "thisCard" // the card whose ability or ally action this is
   | "allEnemies" // the villain and every minion
   | "allAllies" // every ally of this player
-  | "chooseAlly"; // one of your allies
+  | "chooseAlly" // one of your allies
+  | "choosePlayer" // a player (their hero and allies); automatic when playing solo
+  | "bestPlan"; // picked for you: a side plan this clears, else the main plan, else the fullest side plan
 
 /** Printed resource types. Comodín counts as any type. */
 export type ResType = "energia" | "mental" | "fisico" | "comodin";
@@ -55,7 +57,7 @@ export type Effect =
     }
   | { do: "addThreat"; target: Target; amount: number }
   | { do: "heal"; target: Target; amount: number }
-  | { do: "draw"; amount: number; ifPaid?: ResType } // ifPaid: only if paid with that type
+  | { do: "draw"; amount: number; ifPaid?: ResType; each?: boolean } // ifPaid: only if paid with that type; each: every player draws
   | { do: "prevent"; amount: number } // during a defence: less damage
   | { do: "stun"; target: Target } // the enemy skips its next activation
   | { do: "readyHero" }
@@ -85,6 +87,17 @@ export type Effect =
   | { do: "triggerAll"; trait: string; primaryBonus: number }
   | { do: "drone"; amount: number } // the top cards of your deck come into play face down as Drones engaged with you
   | { do: "discardUpgrade" } // discard one of your upgrades (the most expensive)
+  /** Discard the top cards of your deck; those with exactly this printed resource go to your hand. */
+  | { do: "millTake"; amount: number; res: ResType }
+  /** Until the end of the phase: +stats to an ally ("thisCard") or to a player's hero and allies ("choosePlayer"). */
+  | { do: "tempBuff"; target: Target; fuerza?: number; ingenio?: number; choose?: boolean }
+  | { do: "readyAlly"; target: Target }
+  /** Pay the printed cost of an ally in any player's discard (paid for you) to put it into play under your control. */
+  | { do: "reviveAlly" }
+  /** The next card that player plays this phase costs this much less. */
+  | { do: "discount"; target: Target; amount: number }
+  /** This upgrade attaches to the chosen ally, minion or enemy (max one copy per card). */
+  | { do: "attachSelf"; target: Target }
   // Campaign villains
   | { do: "ifTrait"; trait: string; effects: Effect[]; else?: Effect[] } // only if the villain has this trait (from the environment)
   | { do: "armWeapon" } // the top card of the weapons deck attaches to the villain; if it is empty, surge
@@ -106,7 +119,8 @@ export type Timing =
   | "defend" // interrupt: while an enemy attacks you, before damage
   | "afterAttack" // response: after an enemy attacked you
   | "afterUpgrade" // response: after you play an upgrade
-  | "villainAttack"; // response: after the villain starts an attack against you
+  | "villainAttack" // response: after the villain starts an attack against you
+  | "treachery"; // interrupt: when a treachery is revealed against you, cancel its effects
 
 export interface Ability {
   timing: Timing; cost?: "exhaust" | "once"; effects: Effect[]; text: string; heroOnly?: boolean;
@@ -148,7 +162,19 @@ export interface PlayerCardDef {
     onThwart?: Effect[];
     /** When it blocks an attack, before damage ("prevent" lowers the damage; "attacker" is the enemy). */
     onBlock?: Effect[];
+    /** After a minion enters play: spend one of its counters to run these (lastTarget is the minion). */
+    onMinionEnters?: Effect[];
   };
+  /** Upgrades attached to an ally: bonus to that ally. */
+  attachBonus?: { fuerza?: number; ingenio?: number };
+  /** Attached to an enemy: when it would attack, discard this instead and stun the enemy. */
+  snare?: boolean;
+  /** Attached to a minion: when it is defeated (the card goes back to your discard). */
+  onHostDefeated?: Effect[];
+  /** Allies: discarded at the end of the round. */
+  temporary?: boolean;
+  /** Resource cards: worth double when paying for a card with this trait. */
+  doubleFor?: string;
   /** Upgrades: stat bonus to the hero. */
   bonus?: Stats & { vidaMax?: number; mano?: number };
   /** Traits other cards can count (e.g. "pieza" for armour pieces). */
@@ -159,7 +185,7 @@ export interface PlayerCardDef {
   ability?: Ability;
   abilities?: Ability[];
   /** Exhaust it while paying for a card: it gives this resource. */
-  resourceAbility?: { res: ResType; amount: number };
+  resourceAbility?: { res: ResType; amount: number; heroOnly?: boolean };
   /** Counters it enters play with; a resource card with counters is discarded when they run out. */
   uses?: number;
   /** Upgrades: after an enemy attacks your hero, deal this much damage to it. */
@@ -322,10 +348,16 @@ export interface CardInPlay extends Statuses {
   damage: number;
   /** Ability used this round (for "once" costs). */
   usedThisRound?: boolean;
+  /** Bonuses until the end of the phase. */
+  temp?: { fuerza?: number; ingenio?: number };
+  /** Upgrades attached to this ally (uids). */
+  attached?: string[];
 }
+/** A player card attached to an enemy, and who owns it. */
+export interface PlayerAttachment { uid: string; owner: number }
 
 /** A minion. A Drone is a player card (its uid) played face down with the "dron" definition. */
-export interface MinionState extends Statuses { uid: string; def: string; damage: number; drone?: boolean }
+export interface MinionState extends Statuses { uid: string; def: string; damage: number; drone?: boolean; attached?: PlayerAttachment[] }
 
 export interface PlanState { uid: string; def: string | "main"; threat: number }
 
@@ -352,6 +384,10 @@ export interface PlayerState {
   identityResUsed?: boolean;
   /** Nemesis cards set aside (uids) until they come into play. */
   nemesis?: string[];
+  /** Hero bonuses until the end of the phase. */
+  temp?: { fuerza?: number; ingenio?: number };
+  /** The next card played this phase costs this much less. */
+  discount?: number;
 }
 
 export type Phase = "jugadores" | "villano" | "fin";
@@ -375,6 +411,8 @@ export type Resume =
   | { r: "afterAttack"; player: number; attacker: string }
   /** src: "hero", "identity" or "<card uid>#<ability index>". */
   | { r: "abilityPay"; player: number; src: string }
+  /** A treachery was revealed against this player: cancel it with a card from hand, or let it resolve. */
+  | { r: "treachery"; player: number; card: string }
   | { r: "villainStep" };
 
 export interface EffectCtx {
@@ -408,7 +446,7 @@ export interface GameState {
   round: number;
   phase: Phase;
   /** `stage` is a position in the stages used this game (see stagesFor). Duro: the next damage is cancelled. */
-  villain: { stage: number; damage: number; stunned: boolean; confused?: boolean; tough?: boolean; attachments: string[] };
+  villain: { stage: number; damage: number; stunned: boolean; confused?: boolean; tough?: boolean; attachments: string[]; playerAttached?: PlayerAttachment[] };
   plans: PlanState[];
   encounterDeck: string[];
   encounterDiscard: string[];

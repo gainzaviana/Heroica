@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { act, answer, canPlay, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats, villainTraits } from "../engine/game";
+import { act, allyStats, answer, canPlay, resourceSources, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats, villainTraits } from "../engine/game";
 import type { GameState } from "../engine/types";
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, PLAYER_CARDS, SCENARIOS } from "../data/content";
 
@@ -54,6 +54,9 @@ function cardsAccounted(s: GameState): number {
   let n = s.encounterDeck.length + s.encounterDiscard.length + s.villain.attachments.length + s.plans.filter((p) => p.def !== "main").length;
   n += Object.values(s.sideDecks ?? {}).reduce((a, d) => a + d.length, 0) + (s.setAside?.length ?? 0) + (s.environment ? 1 : 0) + (s.captives?.cards.length ?? 0);
   for (const p of s.players) n += p.deck.length + p.hand.length + p.discard.length + p.play.length + p.engaged.length + (p.nemesis?.length ?? 0);
+  // Player cards attached to allies, minions or the villain.
+  for (const p of s.players) n += p.play.reduce((a, c) => a + (c.attached?.length ?? 0), 0) + p.engaged.reduce((a, m) => a + (m.attached?.length ?? 0), 0);
+  n += s.villain.playerAttached?.length ?? 0;
   return n;
 }
 
@@ -517,12 +520,12 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
 
   it("Funámbula: Lía generates 🧠 once per round; Sexto sentido draws when the villain attacks", () => {
     const { s, p } = setup("asalto-arsenal", "funambula", "identidad");
-    mainPlan(s).threat = 4;
-    const card = toHand(s, "por-aurelia");
+    p.damage = 5;
+    const card = toHand(s, "vendaje-rapido");
     expect(canPlay(s, 0, card)).toBeUndefined(); // the identity resource pays for it
     act(s, { a: "play", player: 0, card, pay: [], extra: ["identity"] });
-    expect(mainPlan(s).threat).toBe(1); // 2 + 1 for paying 🧠
-    const again = toHand(s, "vigilancia");
+    expect(p.damage).toBe(3);
+    const again = toHand(s, "vendaje-rapido", 1);
     expect(act(s, { a: "play", player: 0, card: again, pay: [], extra: ["identity"] })).toBeDefined(); // already used this round
 
     const x = setup("asalto-arsenal", "funambula", "heroe", 32).s;
@@ -540,11 +543,172 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
     p.play.push({ uid: web, def: "lanzadores-seda", exhausted: false, damage: 0, counters: 3 });
     for (let k = 0; k < 3; k++) {
       p.play.forEach((c) => (c.exhausted = false));
-      const card = toHand(s, ["vigilancia", "vigilancia", "por-aurelia"][k], [0, 1, 0][k]);
+      const card = toHand(s, ["vendaje-rapido", "vendaje-rapido", "abuela-teresa"][k], [0, 1, 0][k]);
       expect(act(s, { a: "play", player: 0, card, pay: [], extra: [web] })).toBeUndefined();
     }
     expect(p.play.some((c) => c.uid === web)).toBe(false);
     expect(p.discard).toContain(web);
+  });
+
+  describe("Funámbula: su mazo de 40 cartas", () => {
+    /** Moves encounter cards (by definition) to the top of the encounter deck, in order. */
+    const stack = (s: GameState, defs: string[]) => {
+      const out: string[] = [];
+      for (const d of defs) {
+        const u = [...s.encounterDeck, ...s.encounterDiscard].find((x) => s.cards[x] === d && !out.includes(x))!;
+        s.encounterDeck = s.encounterDeck.filter((x) => x !== u); s.encounterDiscard = s.encounterDiscard.filter((x) => x !== u);
+        out.push(u);
+      }
+      s.encounterDeck.unshift(...out);
+    };
+    const engage = (s: GameState, def = "maton-sueldo") => {
+      const m = s.encounterDeck.find((u) => s.cards[u] === def)!;
+      s.encounterDeck = s.encounterDeck.filter((u) => u !== m);
+      s.players[0].engaged.push({ uid: m, def, damage: 0 });
+      return m;
+    };
+
+    it("has 40 cards: 15 hers, 15 Liderazgo, 10 básicas", () => {
+      const deck = HEROES.find((h) => h.id === "funambula")!.deck;
+      expect(deck).toHaveLength(40);
+      expect(deck.filter((d) => PLAYER_CARDS.get(d)!.traits?.includes("liderazgo"))).toHaveLength(15);
+    });
+
+    it("Dédalo keeps the 🧠 cards it discards; Patada Pendular deals 8", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula");
+      const mind = take(s, "chispa-genio"), power = take(s, "celula-energia");
+      p.deck.unshift(mind, power);
+      act(s, { a: "play", player: 0, card: toHand(s, "dedalo-inventor"), pay: [toHand(s, "pulso-fuerza")] });
+      expect(p.hand).toContain(mind);
+      expect(p.discard).toContain(power);
+      act(s, { a: "play", player: 0, card: toHand(s, "patada-pendular"), pay: [mind, toHand(s, "don-mando")] });
+      expect(s.villain.damage).toBe(8);
+    });
+
+    it("Hilo Rastreador removes 3 threat when its minion falls; Red Atrapante cancels the next attack and stuns", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula");
+      mainPlan(s).threat = 5;
+      const m = engage(s);
+      const hilo = toHand(s, "hilo-rastreador");
+      act(s, { a: "play", player: 0, card: hilo, pay: [toHand(s, "vendaje-rapido")] });
+      expect(p.engaged[0].attached?.[0].uid).toBe(hilo);
+      act(s, { a: "play", player: 0, card: toHand(s, "patada-pendular"), pay: [toHand(s, "pulso-fuerza"), toHand(s, "don-mando")] });
+      answer(s, m);
+      expect(mainPlan(s).threat).toBe(2);
+      expect(p.discard).toContain(hilo);
+
+      const x = setup("asalto-arsenal", "funambula", "heroe", 33);
+      const red = toHand(x.s, "red-atrapante");
+      act(x.s, { a: "play", player: 0, card: red, pay: [toHand(x.s, "pulso-fuerza"), toHand(x.s, "celula-energia")] });
+      expect(x.s.villain.playerAttached?.[0].uid).toBe(red);
+      expect(canPlay(x.s, 0, toHand(x.s, "red-atrapante", 1))).toBeDefined(); // one per enemy
+      villainTurn(x.s);
+      expect(x.s.log.some((l) => l.text.includes("atrapa"))).toBe(true);
+      expect(x.s.villain.stunned).toBe(true);
+      expect(x.p.discard).toContain(red);
+    });
+
+    it("Visión Periférica cancels a treachery; Voltereta prevents a whole attack", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula", "heroe", 34);
+      toHand(s, "vision-periferica"); toHand(s, "voltereta"); toHand(s, "pulso-fuerza");
+      stack(s, ["emboscada", "avance-oscuro"]); // boost, then the dealt card
+      const threat = mainPlan(s).threat;
+      act(s, { a: "endTurn", player: 0, discard: [] });
+      let guard = 0;
+      while (s.prompt && guard++ < 20) {
+        const pr = s.prompt;
+        const pick = pr.kind === "defense" ? "none" : pr.options.find((o) => o.label === "Voltereta" || o.label === "Visión Periférica")?.id ?? "no";
+        answer(s, pick);
+      }
+      expect(p.damage).toBe(0);
+      expect(s.log.some((l) => l.text.includes("Avance Oscuro no tiene efecto"))).toBe(true);
+      expect(mainPlan(s).threat).toBe(threat + 1); // only the acceleration
+    });
+
+    it("Arquero del Campanario shoots each minion that enters play, spending an arrow", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula", "identidad", 35);
+      act(s, { a: "play", player: 0, card: toHand(s, "arquero-campanario"), pay: [toHand(s, "pulso-fuerza"), toHand(s, "vendaje-rapido")] });
+      stack(s, ["emboscada", "maton-sueldo"]);
+      villainTurn(s);
+      while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+      const m = p.engaged.find((x) => x.def === "maton-sueldo")!;
+      expect(m.damage).toBe(2);
+      expect(p.play.find((c) => s.cards[c.uid] === "arquero-campanario")!.counters).toBe(3);
+    });
+
+    it("Comisaria Vega, Autómata de Cristal, ¡En Pie!, Al Frente del Grupo and Palabras de Ánimo", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula", "heroe", 36);
+      const hand = p.hand.length;
+      act(s, { a: "play", player: 0, card: toHand(s, "comisaria-vega"), pay: [toHand(s, "pulso-fuerza")] });
+      expect(p.hand.length).toBe(hand + 1);
+      const golem = toPlay(s, "automata-cristal");
+      toHand(s, "celula-energia");
+      act(s, { a: "useCard", player: 0, card: golem });
+      answer(s, s.prompt!.options.find((o) => o.id !== "no")!.id); // pay with ⚡
+      answer(s, "1"); // +2 Fuerza
+      const g = p.play.find((c) => c.uid === golem)!;
+      expect(allyStats(s, g).fuerza).toBe(4);
+      act(s, { a: "allyAttack", player: 0, ally: golem });
+      expect(g.exhausted).toBe(true);
+      act(s, { a: "play", player: 0, card: toHand(s, "en-pie"), pay: [] });
+      expect(g.exhausted).toBe(false);
+      act(s, { a: "play", player: 0, card: toHand(s, "al-frente"), pay: [toHand(s, "don-mando")] }); // Don de Mando: 🌟🌟 for Liderazgo
+      expect(heroStats(s, 0).fuerza).toBe(2);
+      expect(allyStats(s, g).fuerza).toBe(5);
+      const words = toHand(s, "palabras-animo");
+      act(s, { a: "play", player: 0, card: words, pay: [toHand(s, "vendaje-rapido")] });
+      answer(s, golem);
+      expect(allyStats(s, g).ingenio).toBe(1 + 1 + 1); // base, Al Frente and Palabras de Ánimo
+      villainTurn(s);
+      while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+      const g2 = p.play.find((c) => c.uid === golem);
+      if (g2) expect(allyStats(s, g2).fuerza).toBe(3); // temporary bonuses gone, Palabras stays
+      expect(heroStats(s, 0).fuerza).toBe(1);
+    });
+
+    it("Don de Mando doubles only for Liderazgo; Aeronave de Mando lowers the next card by 1", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula", "heroe", 37);
+      const punch = toHand(s, "directo-demoledor");
+      const don = toHand(s, "don-mando");
+      expect(act(s, { a: "play", player: 0, card: punch, pay: [don] })).toBeDefined();
+      const ship = toPlay(s, "aeronave-mando");
+      act(s, { a: "useCard", player: 0, card: ship });
+      expect(p.discount).toBe(1);
+      expect(act(s, { a: "play", player: 0, card: punch, pay: [don] })).toBeUndefined();
+      expect(s.villain.damage).toBe(3);
+      expect(p.discount).toBe(0);
+    });
+
+    it("Llamada de Refuerzos pays for an ally in a discard and brings it into play; El Director Umbral leaves at the end of the round", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula", "identidad", 38);
+      const vega = take(s, "comisaria-vega"); p.discard.push(vega);
+      const fuel = toHand(s, "pulso-fuerza");
+      act(s, { a: "play", player: 0, card: toHand(s, "llamada-refuerzos"), pay: [] });
+      answer(s, vega);
+      expect(p.play.some((c) => c.uid === vega)).toBe(true);
+      expect(p.discard).toContain(fuel);
+
+      const boss = toHand(s, "director-umbral");
+      act(s, { a: "play", player: 0, card: boss, pay: [toHand(s, "celula-energia"), toHand(s, "chispa-genio")] });
+      const before = p.hand.length;
+      answer(s, "1"); // draw 3
+      expect(p.hand.length).toBe(before + 3);
+      villainTurn(s);
+      while (s.prompt) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+      expect(p.play.some((c) => c.uid === boss)).toBe(false);
+      expect(p.discard).toContain(boss);
+    });
+
+    it("Lanzadores de Seda only pay in hero form; Abuela Teresa heals 4 in identity", () => {
+      const { s, p } = setup("asalto-arsenal", "funambula", "identidad", 39);
+      toPlay(s, "lanzadores-seda");
+      expect(resourceSources(s, 0).some((r) => s.cards[r.id] === "lanzadores-seda")).toBe(false);
+      p.form = "heroe";
+      expect(resourceSources(s, 0).some((r) => s.cards[r.id] === "lanzadores-seda")).toBe(true);
+      p.form = "identidad"; p.damage = 6;
+      act(s, { a: "useCard", player: 0, card: toPlay(s, "abuela-teresa") });
+      expect(p.damage).toBe(2);
+    });
   });
 
   it("Mole Tronante: hand discarded at the end of a hero turn; ✊ scaling cards", () => {
@@ -617,12 +781,12 @@ describe("Nuevos héroes, escenarios y fase del villano", () => {
   });
 
   it("Liderazgo: Arenga buffs an ally for good, Toque de Reunión readies allies, Hacer la Llamada recalls one", () => {
-    const { s, p } = setup("asalto-arsenal", "funambula", "identidad");
+    const { s, p } = setup("asalto-arsenal", "centella", "identidad");
     const cap = toPlay(s, "capitana-fernandez");
     act(s, { a: "play", player: 0, card: toHand(s, "arenga"), pay: [toHand(s, "golpe-certero")] });
     act(s, { a: "allyAttack", player: 0, ally: cap });
     expect(s.villain.damage).toBe(3);
-    act(s, { a: "play", player: 0, card: toHand(s, "toque-reunion"), pay: [toHand(s, "golpe-certero", 1)] });
+    act(s, { a: "play", player: 0, card: toHand(s, "toque-reunion"), pay: [toHand(s, "vigilancia", 1)] });
     expect(p.play.find((c) => c.uid === cap)?.exhausted).toBe(false);
     const mage = take(s, "mago-errante"); p.discard.push(mage);
     act(s, { a: "play", player: 0, card: toHand(s, "hacer-llamada"), pay: [] });
@@ -743,7 +907,7 @@ describe("Aliados con habilidad", () => {
     for (const h of HEROES) for (const id of new Set(h.deck)) {
       const c = PLAYER_CARDS.get(id)!;
       if (!c.ally) continue;
-      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock);
+      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock || c.ally.onMinionEnters);
       expect(has, `${h.id}: ${c.name}`).toBe(true);
     }
   });
@@ -778,7 +942,7 @@ describe("Aliados con habilidad", () => {
   });
 
   it("enter-play and action abilities: Capitana readies allies, Coronel gives Duro, Zola heals without exhausting", () => {
-    const { s, p } = setup("funambula");
+    const { s, p } = setup("centella");
     const mage = toPlay(s, "mago-errante");
     p.play.find((c) => c.uid === mage)!.exhausted = true;
     const cap = Object.keys(s.cards).find((x) => s.cards[x] === "capitana-fernandez")!;
