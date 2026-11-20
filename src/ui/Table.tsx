@@ -232,7 +232,7 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           {hero && <button class="act red" disabled={p.heroExhausted} onClick={() => store.act({ a: "attack", player: i })}>Atacar ({st.fuerza})</button>}
           {hero && <button class="act blue" disabled={p.heroExhausted} onClick={() => store.act({ a: "thwart", player: i })}>Contener ({st.ingenio})</button>}
           {!hero && <button class="act green" disabled={p.heroExhausted || p.damage === 0} onClick={() => store.act({ a: "recover", player: i })}>Recuperar ({st.recuperacion})</button>}
-          {hero && ability?.timing === "action" && <button class="act gold" disabled={p.heroAbilityUsed} onClick={() => store.act({ a: "heroAbility", player: i })}>{ability.text}</button>}
+          {hero && ability?.timing === "action" && <button class="act gold" disabled={ability.cost === "exhaustHero" ? p.heroExhausted : p.heroAbilityUsed} onClick={() => store.act({ a: "heroAbility", player: i })}>{ability.text}{p.invocation?.deck[0] ? ` (${pcard(s, p.invocation.deck[0]).name}, coste ${pcard(s, p.invocation.deck[0]).cost})` : ""}</button>}
           {!hero && h.identityAbility && <button class="act gold" disabled={!!p.identityAbilityUsed} onClick={() => store.act({ a: "identityAbility", player: i })}>{h.identityAbility.text}</button>}
           <button class="act ghost" disabled={p.flippedThisTurn} onClick={() => store.act({ a: "flip", player: i })}>{hero ? `Volver a ${h.identity.name}` : `Transformarse en ${h.hero.name}`}{!hero && currentStage(s).flipPunish ? ` (−${currentStage(s).flipPunish} vida)` : ""}</button>
         </div>
@@ -270,6 +270,14 @@ function HeroPanel({ s, i, canAct, onAlly, onEncounter }: { s: GameState; i: num
           })}
         </div>
       </div>
+      {p.invocation && (
+        <div class="zone">
+          <div class="zone-title">Mazo de invocación ({p.invocation.deck.length} · descarte {p.invocation.discard.length})</div>
+          <div class="cards">
+            {p.invocation.deck[0] ? <PlayerCard def={pcard(s, p.invocation.deck[0])} size="md" /> : <div class="empty">Se baraja de nuevo al usarlo.</div>}
+          </div>
+        </div>
+      )}
       <div class="muted small">Mazo {p.deck.length} · descarte {p.discard.length}</div>
     </div>
   );

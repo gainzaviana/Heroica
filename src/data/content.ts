@@ -1,6 +1,9 @@
 import type { Aspect, EncounterCardDef, HeroDef, PlayerCardDef, ScenarioDef } from "../engine/types";
 import { LIDERAZGO, PROTECCION } from "./roster/aspects";
 import { ALBUM_CARDS } from "./roster/album";
+import { BALUARTE, BALUARTE_CARDS } from "./roster/baluarte";
+import { CUSTODIO, CUSTODIO_CARDS } from "./roster/custodio";
+import { SIBILA, SIBILA_CARDS } from "./roster/sibila";
 import { CENIZA_CARDS, CENIZA_ENCOUNTERS, CENIZA_SCENARIOS, CENIZA_SETS } from "./roster/campana-ceniza";
 import { CENTELLA, CENTELLA_CARDS } from "./roster/centella";
 import { FUNAMBULA, FUNAMBULA_CARDS } from "./roster/funambula";
@@ -125,6 +128,9 @@ const cards: PlayerCardDef[] = [
   ...tag("heroe", MOLE_CARDS),
   ...tag("heroe", CENTELLA_CARDS),
   ...tag("heroe", SOBERANO_CARDS),
+  ...tag("heroe", BALUARTE_CARDS),
+  ...tag("heroe", CUSTODIO_CARDS),
+  ...tag("heroe", SIBILA_CARDS),
   ...tag("campana", CENIZA_CARDS),
 ];
 
@@ -161,6 +167,9 @@ export const HEROES: HeroDef[] = [
   MOLE,
   CENTELLA,
   SOBERANO,
+  BALUARTE,
+  CUSTODIO,
+  SIBILA,
 ];
 
 // MARK: Encounter cards
@@ -243,7 +252,7 @@ export const PACKS: { id: string; name: string; intro: string; campaign?: boolea
 export const packOf = (sc: ScenarioDef) => sc.pack ?? "basica";
 
 // Signature cards know their hero (for the hero's colour on the card frame).
-for (const h of HEROES) for (const id of h.deck) { const c = cards.find((x) => x.id === id); if (c?.aspect === "heroe") c.owner ??= h.id; }
+for (const h of HEROES) for (const id of [...h.deck, ...(h.invocation ?? [])]) { const c = cards.find((x) => x.id === id); if (c?.aspect === "heroe") c.owner ??= h.id; }
 
 export const PLAYER_CARDS = new Map(cards.map((c) => [c.id, c]));
 /** The colour of a hero (for their signature cards). */

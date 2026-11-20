@@ -15,7 +15,7 @@ const GROUPS: { type: PlayerCardType; title: string }[] = [
 
 const ASPECT_COLOUR: Record<Aspect, string> = { heroe: "#8a6d3b", agresion: "#dc2626", justicia: "#ca8a04", proteccion: "#16a34a", liderazgo: "#2563eb", basica: "#64748b", campana: "#9a6b3a" };
 
-const TIMING: Record<string, string> = { action: "Acción", defend: "Al defenderte", afterAttack: "Después de un ataque", afterUpgrade: "Después de jugar una mejora", villainAttack: "Respuesta, cuando el villano te ataca" };
+const TIMING: Record<string, string> = { action: "Acción", defend: "Al defenderte", afterAttack: "Después de un ataque", afterUpgrade: "Después de jugar una mejora", villainAttack: "Respuesta, cuando el villano te ataca", boostSwap: "Cuando el villano cuenta su refuerzo (una vez por fase)" };
 
 /** Every card in a hero's deck, grouped by type, with counts and full text: to inspect a deck before playing. */
 export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => void }) {
@@ -83,6 +83,15 @@ export function DeckViewer({ hero, onClose }: { hero: HeroDef; onClose: () => vo
           </section>
         );
       })}
+
+      {hero.invocation && (
+        <section class="deck-group" aria-label="Mazo de invocación">
+          <div class="zone-title">Mazo de invocación ({hero.invocation.length}, aparte del mazo)</div>
+          <ul class="deck-list">
+            {hero.invocation.map((id) => <DeckRow key={id} def={PLAYER_CARDS.get(id)!} count={1} />)}
+          </ul>
+        </section>
+      )}
 
       {extra.length > 0 && (
         <section class="deck-group" aria-label="Némesis y obligación">

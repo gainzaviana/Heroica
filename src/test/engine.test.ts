@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { act, allyStats, answer, canPlay, resourceSources, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats, villainTraits } from "../engine/game";
+import { act, allyStats, answer, canPlay, costOf, resourceSources, handSize, runVillain, heroOf, heroStats, mainPlan, mainPlanStages, minionStats, newGame, pcard, planLimit, resourcesOf, villainStats, villainTraits } from "../engine/game";
 import type { GameState } from "../engine/types";
 import { ENCOUNTER_CARDS, ENCOUNTER_SETS, HEROES, PLAYER_CARDS, SCENARIOS } from "../data/content";
 
@@ -57,6 +57,7 @@ function cardsAccounted(s: GameState): number {
   // Player cards attached to allies, minions or the villain.
   for (const p of s.players) n += p.play.reduce((a, c) => a + (c.attached?.length ?? 0), 0) + p.engaged.reduce((a, m) => a + (m.attached?.length ?? 0), 0);
   n += (s.villain.playerAttached?.length ?? 0) + (s.planAttached?.length ?? 0);
+  for (const p of s.players) n += (p.invocation?.deck.length ?? 0) + (p.invocation?.discard.length ?? 0);
   return n;
 }
 
@@ -937,7 +938,7 @@ describe("Aliados con habilidad", () => {
     for (const h of HEROES) for (const id of new Set(h.deck)) {
       const c = PLAYER_CARDS.get(id)!;
       if (!c.ally) continue;
-      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock || c.ally.onMinionEnters || c.ally.attackDiscard);
+      const has = !!(c.onPlay || c.ability || c.abilities || c.ally.onAttack || c.ally.onKill || c.ally.onThwart || c.ally.onBlock || c.ally.onMinionEnters || c.ally.attackDiscard || c.upgradeDiscount);
       expect(has, `${h.id}: ${c.name}`).toBe(true);
     }
   });
@@ -1584,3 +1585,189 @@ function villainTurnOnce(s: GameState) {
   let g = 0;
   while (s.prompt && g++ < 30) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
 }
+
+describe("Baluarte, Custodio del Umbral y Sibila del Caos", () => {
+  function setup(hero: string, form: "heroe" | "identidad" = "heroe", seed = 81) {
+    const s = newGame("asalto-arsenal", [hero], seed);
+    if (s.prompt) answer(s, s.prompt.options[0].id);
+    const p = s.players[0];
+    p.deck.push(...p.hand); p.hand = [];
+    p.form = form;
+    return { s, p };
+  }
+  function take(s: GameState, def: string, nth = 0): string {
+    let u = Object.keys(s.cards).filter((x) => s.cards[x] === def)[nth];
+    if (!u) { u = `t${s.nextUid++}`; s.cards[u] = def; }
+    const p = s.players[0];
+    p.deck = p.deck.filter((x) => x !== u); p.hand = p.hand.filter((x) => x !== u); p.discard = p.discard.filter((x) => x !== u); p.play = p.play.filter((c) => c.uid !== u);
+    return u;
+  }
+  const toHand = (s: GameState, def: string, nth = 0) => { const u = take(s, def, nth); s.players[0].hand.push(u); return u; };
+  const toPlay = (s: GameState, def: string, nth = 0) => {
+    const u = take(s, def, nth);
+    const c = PLAYER_CARDS.get(def)!;
+    s.players[0].play.push({ uid: u, def, exhausted: false, damage: 0, ...(c.uses !== undefined ? { counters: c.uses } : {}) });
+    return u;
+  };
+  const engage = (s: GameState, def = "maton-sueldo") => {
+    const m = s.encounterDeck.find((u) => s.cards[u] === def)!;
+    s.encounterDeck = s.encounterDeck.filter((u) => u !== m);
+    s.players[0].engaged.push({ uid: m, def, damage: 0 });
+    return m;
+  };
+  const stack = (s: GameState, defs: string[]) => {
+    const out: string[] = [];
+    for (const d of defs) {
+      const u = [...s.encounterDeck, ...s.encounterDiscard].find((x) => s.cards[x] === d && !out.includes(x))!;
+      s.encounterDeck = s.encounterDeck.filter((x) => x !== u); s.encounterDiscard = s.encounterDiscard.filter((x) => x !== u);
+      out.push(u);
+    }
+    s.encounterDeck.unshift(...out);
+  };
+
+  it("Baluarte starts with the Égida; it blocks a whole attack, is thrown at enemies and comes back; Revés hits back with his Fuerza", () => {
+    const s0 = newGame("asalto-arsenal", ["baluarte"], 82);
+    expect(s0.players[0].hand.some((u) => s0.cards[u] === "egida-bronce")).toBe(true);
+    const { s, p } = setup("baluarte", "heroe", 83);
+    const shield = toPlay(s, "egida-bronce");
+    toHand(s, "parada-egida"); toHand(s, "reves-certero");
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    while (s.prompt?.kind === "optional" && !s.prompt.text.includes("golpe")) answer(s, "no");
+    answer(s, "hero");
+    answer(s, s.prompt!.options.find((o) => s.cards[o.id] === "parada-egida")!.id);
+    while (s.prompt?.kind === "optional" && s.prompt.text.includes("golpe")) answer(s, "no");
+    expect(p.damage).toBe(0);
+    expect(p.play.find((c) => c.uid === shield)!.exhausted).toBe(true);
+    const villainBefore = s.villain.damage;
+    if (s.prompt?.options.some((o) => s.cards[o.id] === "reves-certero")) answer(s, s.prompt.options.find((o) => s.cards[o.id] === "reves-certero")!.id);
+    expect(s.villain.damage).toBeGreaterThanOrEqual(villainBefore + 2);
+    const x = setup("baluarte", "heroe", 84);
+    const sh = toPlay(x.s, "egida-bronce");
+    const m = engage(x.s);
+    toHand(x.s, "pulso-fuerza"); toHand(x.s, "vendaje-rapido");
+    act(x.s, { a: "play", player: 0, card: toHand(x.s, "egida-arrojada"), pay: [] });
+    answer(x.s, "villain"); answer(x.s, m);
+    expect(x.s.villain.damage).toBe(4);
+    expect(x.p.engaged).toHaveLength(0);
+    expect(x.p.hand).toContain(sh);
+  });
+
+  it("Baluarte: Carga Valiente stuns if paid ✊; Yelmo saves him once; the first ally each round is cheaper in identity; Indomable readies after defending", () => {
+    const { s, p } = setup("baluarte", "heroe", 85);
+    act(s, { a: "play", player: 0, card: toHand(s, "carga-valiente"), pay: [toHand(s, "pulso-fuerza"), toHand(s, "vendaje-rapido")] });
+    expect([s.villain.damage, s.villain.stunned]).toEqual([6, true]);
+    toPlay(s, "yelmo-veterano");
+    p.damage = 10;
+    toPlay(s, "egida-bronce");
+    expect(heroStats(s, 0).vidaMax).toBe(11);
+    p.form = "identidad";
+    const scout = toHand(s, "exploradora-ordonez");
+    expect(costOf(s, 0, scout)).toBe(2);
+    p.form = "heroe";
+    toPlay(s, "indomable");
+    act(s, { a: "attack", player: 0 });
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    let g = 0;
+    while (s.prompt && g++ < 20) answer(s, s.prompt.kind === "defense" ? "hero" : s.prompt.options[s.prompt.options.length - 1].id);
+    expect(p.eliminated).toBe(false);
+  });
+
+  it("Custodio: invocation deck — Dominio arcano pays and resolves the top card; Talento innato cycles it; Maestría puts it back", () => {
+    const { s, p } = setup("custodio", "heroe", 86);
+    expect(p.invocation!.deck).toHaveLength(5);
+    const winds = p.invocation!.deck.find((u) => s.cards[u] === "inv-vientos")!;
+    p.invocation!.deck = [winds, ...p.invocation!.deck.filter((u) => u !== winds)];
+    const hand = p.hand.length;
+    act(s, { a: "heroAbility", player: 0 });
+    expect(p.hand.length).toBe(hand + 3);
+    expect(p.heroExhausted).toBe(true);
+    expect(p.invocation!.discard).toContain(winds);
+    const chains = p.invocation!.deck.find((u) => s.cards[u] === "inv-cadenas")!;
+    p.invocation!.deck = [chains, ...p.invocation!.deck.filter((u) => u !== chains)];
+    toHand(s, "pulso-fuerza");
+    act(s, { a: "play", player: 0, card: toHand(s, "maestria-arcana"), pay: [toHand(s, "chispa-genio")] });
+    expect(s.villain.damage).toBe(7);
+    expect(s.villain.stunned).toBe(true);
+    expect(p.invocation!.deck[0]).toBe(chains); // back on top
+    p.form = "identidad";
+    act(s, { a: "identityAbility", player: 0 });
+    expect(p.invocation!.discard).toContain(chains);
+  });
+
+  it("Custodio: Viaje Astral adds the top encounter card's ⭐; Descarga Arcana reads your top card; Relevo Inmediato brings a fallen ally back", () => {
+    const { s, p } = setup("custodio", "heroe", 87);
+    mainPlan(s).threat = 8;
+    stack(s, ["arrollar"]); // ⭐⭐
+    act(s, { a: "play", player: 0, card: toHand(s, "viaje-astral"), pay: [toHand(s, "chispa-genio")] });
+    expect(mainPlan(s).threat).toBe(8 - 3 - 2);
+    const cell = take(s, "celula-energia"); p.deck.unshift(cell);
+    act(s, { a: "play", player: 0, card: toHand(s, "descarga-arcana"), pay: [toHand(s, "pulso-fuerza"), toHand(s, "vendaje-rapido")] });
+    expect(s.villain.damage).toBe(5 + 2);
+    toPlay(s, "relevo-inmediato");
+    const nut = toPlay(s, "nuez-picara");
+    p.play.find((c) => c.uid === nut)!.damage = 1;
+    act(s, { a: "allyAttack", player: 0, ally: nut }); // 1 consequential damage: defeated
+    expect(p.play.find((c) => c.uid === nut)?.damage).toBe(1);
+    expect(p.play.some((c) => s.cards[c.uid] === "relevo-inmediato")).toBe(false);
+  });
+
+  it("Sibila: Control del caos swaps the boost; the Diadema lowers it; Disolución adds ⭐ as damage; Sortilegio reads 3 cards", () => {
+    const { s, p } = setup("sibila", "heroe", 88);
+    stack(s, ["arrollar", "maton-sueldo"]); // boost ⭐⭐, then a 1⭐ card to swap in
+    toPlay(s, "diadema-azar");
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    expect(s.prompt?.options.map((o) => o.id)).toContain("swap");
+    answer(s, "swap");
+    expect(s.log.some((l) => l.text.includes("en vez del refuerzo cuenta Matón a Sueldo"))).toBe(true);
+    let g = 0;
+    while (s.prompt && g++ < 20) answer(s, s.prompt.options[s.prompt.options.length - 1].id);
+    const x = setup("sibila", "heroe", 89);
+    stack(x.s, ["arrollar", "piel-acero"]); // ⭐⭐ + ⭐
+    act(x.s, { a: "play", player: 0, card: toHand(x.s, "disolucion"), pay: [toHand(x.s, "celula-energia"), toHand(x.s, "chispa-genio")] });
+    expect(x.s.villain.damage).toBe(5 + 3);
+    const y = setup("sibila", "heroe", 90);
+    mainPlan(y.s).threat = 5;
+    stack(y.s, ["avance-oscuro", "emboscada", "caos-avenida"]); // ⭐⭐ draw · ⭐ thwart · 0 damage
+    const hand = y.p.hand.length;
+    act(y.s, { a: "play", player: 0, card: toHand(y.s, "sortilegio"), pay: [toHand(y.s, "chispa-genio")] });
+    while (y.s.prompt) answer(y.s, y.s.prompt.options[0].id);
+    expect(y.p.hand.length).toBe(hand + 1);
+    expect(mainPlan(y.s).threat).toBe(3);
+    expect(y.s.villain.damage).toBe(2);
+    void p;
+  });
+
+  it("Sibila: Torcer la Realidad cancels any encounter card; Desorden Arcano plays a card for free; Las Tornas Cambian after clearing a plan; Meditación and the Archimago need a Místico", () => {
+    const { s, p } = setup("sibila", "heroe", 91);
+    toHand(s, "torcer-realidad"); toHand(s, "pulso-fuerza");
+    stack(s, ["emboscada", "maton-sueldo"]);
+    act(s, { a: "endTurn", player: 0, discard: [] });
+    let g = 0;
+    while (s.prompt && g++ < 30) {
+      const t = s.prompt.options.find((o) => s.cards[o.id] === "torcer-realidad");
+      answer(s, t ? t.id : s.prompt.kind === "defense" ? "hero" : s.prompt.options[s.prompt.options.length - 1].id);
+    }
+    expect(s.log.some((l) => l.text.includes("Matón a Sueldo no tiene efecto"))).toBe(true);
+    expect(p.engaged.some((m) => m.def === "maton-sueldo")).toBe(false);
+
+    const x = setup("sibila", "heroe", 92);
+    const boss = toHand(x.s, "director-umbral");
+    act(x.s, { a: "play", player: 0, card: toHand(x.s, "desorden-arcano"), pay: [] });
+    answer(x.s, boss);
+    answer(x.s, "1"); // Director: draw 3
+    expect(x.p.play.some((c) => c.uid === boss)).toBe(true);
+    const side = x.s.encounterDeck.find((u) => x.s.cards[u] === "caos-avenida") ?? x.s.encounterDiscard.find((u) => x.s.cards[u] === "caos-avenida")!;
+    x.s.encounterDeck = x.s.encounterDeck.filter((u) => u !== side); x.s.encounterDiscard = x.s.encounterDiscard.filter((u) => u !== side);
+    x.s.plans.push({ uid: side, def: "caos-avenida", threat: 2 });
+    toHand(x.s, "tornas-cambian");
+    act(x.s, { a: "thwart", player: 0 });
+    answer(x.s, side);
+    expect(x.s.prompt?.text).toMatch(/despejado un plan/);
+    answer(x.s, x.s.prompt!.options[0].id);
+    if (x.s.prompt) answer(x.s, "villain");
+    expect(x.s.villain.damage).toBe(3);
+    expect(canPlay(x.s, 0, toHand(x.s, "meditacion"))).toBeUndefined();
+    const v = setup("vanguardia", "heroe", 93);
+    expect(canPlay(v.s, 0, toHand(v.s, "meditacion"))).toMatch(/Guardia|Místico|pertenece/);
+  });
+});

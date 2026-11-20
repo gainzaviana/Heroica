@@ -8,7 +8,7 @@ const TYPE_NAME: Record<string, string> = {
   aliado: "Aliado", mejora: "Mejora", apoyo: "Apoyo", evento: "Evento", recurso: "Recurso",
   esbirro: "Esbirro", traicion: "Traición", plan: "Plan secundario", vinculo: "Vínculo", obligacion: "Obligación", entorno: "Entorno",
 };
-const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo", legion: "Legión", mutante: "Mutante", arma: "Arma experimental", campana: "Campaña", oricalco: "Oricalco", liderazgo: "Liderazgo", guardia: "Guardia de Aurelia", espia: "Espía", planificacion: "Planificación" };
+const TRAIT_NAME: Record<string, string> = { tecnologia: "Tecnología", pieza: "Pieza", aereo: "Aéreo", legion: "Legión", mutante: "Mutante", arma: "Arma experimental", campana: "Campaña", oricalco: "Oricalco", liderazgo: "Liderazgo", guardia: "Guardia de Aurelia", espia: "Espía", planificacion: "Planificación", mistico: "Místico", hechizo: "Hechizo", invocacion: "Invocación" };
 /** Aspect names (the colour of the card frame). */
 export const ASPECT_NAME: Record<Aspect, string> = { heroe: "Héroe", agresion: "Furia", justicia: "Justicia", proteccion: "Protección", liderazgo: "Liderazgo", basica: "Básica", campana: "Campaña" };
 /** A player card's frame colour: its aspect, or its hero's colour for signature cards. */

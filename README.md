@@ -33,6 +33,13 @@ guarda en el propio dispositivo después de cada acción.
     cargas; aliados de la Guardia de Aurelia.
   - **Soberano de Oricalco** (Rey Adisa Mbeki) — Liderazgo. Elige una mejora Oricalco al empezar; *¡Por Oricalcia!*
     resuelve las capacidades especiales de todas sus mejoras en secuencia (la última, más fuerte); Represalia 1.
+  - **Baluarte** (Teniente Marcos Alcalá) — Protección. Empieza con la Égida de Bronce: bloquea un ataque entero
+    (Parada con la Égida), se lanza contra varios enemigos y vuelve a la mano; cartas que aturden y devuelven el golpe.
+    En su identidad, el primer aliado de cada ronda cuesta 1 menos.
+  - **Custodio del Umbral** (Dra. Noa Ferrán) — Liderazgo. Además de su mazo tiene un **mazo de invocación** de 5
+    grandes hechizos: paga el coste del de arriba para lanzarlo (Cadenas de Ámbar, Vientos del Saber…). Muchos aliados.
+  - **Sibila del Caos** (Lucía Montenegro) — Justicia. Sus hechizos leen los ⭐ de refuerzo del mazo de encuentros
+    (Sortilegio, Disolución, Torcer la Realidad); *Control del caos* cambia el refuerzo del ataque del villano.
 - **Escenarios** (Normal: fases I–II del villano; Experto: fases II–III y su conjunto Experto de 3 cartas):
   - *El Asalto al Arsenal* contra **Mazagón, el Titán Embestidor** (+ *Amenaza de Bomba*): golpea fuerte, trama poco.
   - *La Sinfonía Destructora* contra **Estruendo, el Maestro del Sonido** (+ *Liga Siniestra*): 2 cartas de refuerzo por
